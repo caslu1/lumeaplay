@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Painel LumeaPlay</title>
+<link rel="icon" href="../icon-512.png">
+<link rel="stylesheet" href="painel.css">
+</head>
+<body>
+<div class="glow"></div>
+
+<!-- LOGIN -->
+<section id="login" class="center hide">
+  <form class="card login" id="lf">
+    <div class="logo"><b></b><span>Lumea<em>Play</em></span></div>
+    <h1>Painel do revendedor</h1>
+    <p class="mut">Entre com o e-mail e a senha cadastrados no Firebase.</p>
+    <label>E-mail<input id="le" type="email" autocomplete="username" required></label>
+    <label>Senha<input id="lp" type="password" autocomplete="current-password" required></label>
+    <p id="lerr" class="err"></p>
+    <button class="btn pri" type="submit">Entrar</button>
+  </form>
+</section>
+
+<!-- AVISO CONFIG -->
+<section id="nocfg" class="center hide">
+  <div class="card login">
+    <div class="logo"><b></b><span>Lumea<em>Play</em></span></div>
+    <h1>Falta configurar o Firebase</h1>
+    <p class="mut">Preencha o arquivo <code>web/tv/js/config.js</code> com os dados do seu projeto Firebase (apiKey, authDomain, projectId e appId) e publique de novo.</p>
+  </div>
+</section>
+
+<!-- PAINEL -->
+<section id="app" class="hide">
+  <header>
+    <div class="logo"><b></b><span>Lumea<em>Play</em></span></div>
+    <span class="tag">Painel</span>
+    <div class="sp"></div>
+    <span id="who" class="mut sm"></span>
+    <button class="btn ghost sm" id="out">Sair</button>
+  </header>
+
+  <main>
+    <div class="stats">
+      <div class="st"><small>Ativos</small><b id="s1">0</b></div>
+      <div class="st warn"><small>Vencem em 3 dias</small><b id="s2">0</b></div>
+      <div class="st bad"><small>Vencidos</small><b id="s3">0</b></div>
+      <div class="st off"><small>Bloqueados</small><b id="s4">0</b></div>
+    </div>
+
+    <div class="grid">
+      <form class="card" id="nf">
+        <h2>Novo código</h2>
+        <label>Nome do cliente<input id="nn" placeholder="Ex.: João da Silva" required maxlength="80"></label>
+        <label>WhatsApp (opcional)<input id="np" placeholder="Ex.: 11 99999-9999" inputmode="tel" maxlength="20"></label>
+        <label>Link M3U<textarea id="nm" rows="3" placeholder="http://servidor:porta/get.php?username=...&password=...&type=m3u_plus" required></textarea></label>
+        <label>Validade
+          <select id="nv">
+            <option value="h4">Teste — 4 horas</option>
+            <option value="h24">Teste — 24 horas</option>
+            <option value="d3">3 dias</option>
+            <option value="d7">7 dias</option>
+            <option value="d30" selected>30 dias</option>
+            <option value="d90">90 dias</option>
+            <option value="d180">180 dias</option>
+            <option value="d365">1 ano</option>
+          </select>
+        </label>
+        <label>Observação (opcional)<input id="no" maxlength="120" placeholder="Ex.: plano 2 telas"></label>
+        <button class="btn pri" type="submit" id="nbtn">Gerar código de 9 dígitos</button>
+        <div id="res" class="res hide"></div>
+      </form>
+
+      <div class="card">
+        <div class="lh">
+          <h2>Clientes</h2>
+          <div class="sp"></div>
+          <button class="btn ghost sm" id="dnsbtn" type="button">Trocar DNS em massa</button>
+        </div>
+        <div class="filters">
+          <input id="q" placeholder="Buscar por nome, código ou link…">
+          <div class="chips" id="chips">
+            <span data-f="all" class="on">Todos</span><span data-f="ok">Ativos</span><span data-f="soon">Vencendo</span><span data-f="exp">Vencidos</span><span data-f="off">Bloqueados</span>
+          </div>
+        </div>
+        <div id="list" class="list"><p class="mut">Carregando…</p></div>
+      </div>
+    </div>
+  </main>
+</section>
+
+<!-- MODAL -->
+<div id="modal" class="modal hide"><div class="card mbox" id="mbox"></div></div>
+<div id="toast"></div>
+
+<script src="../tv/js/config.js"></script>
+<script type="module" src="painel.js"></script>
+</body>
+</html>

@@ -1,0 +1,60 @@
+name: Gerar APK
+
+on:
+  push:
+    branches: [main]
+    paths: ['android/**', 'web/tv/**', '.github/workflows/apk.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Chave de assinatura
+        env:
+          KS_B64: ${{ secrets.KS_B64 }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/lumea.jks"
+            echo "KS_FILE=$RUNNER_TEMP/lumea.jks" >> "$GITHUB_ENV"
+          else
+            echo "Sem chave própria: o APK será assinado com a chave de teste."
+          fi
+
+      - name: Compilar
+        env:
+          KS_PASS: ${{ secrets.KS_PASS }}
+          KS_ALIAS: lumeaplay
+        run: gradle -p android assembleRelease --no-daemon --stacktrace
+
+      - name: Preparar arquivo
+        run: cp android/app/build/outputs/apk/release/app-release.apk LumeaPlay.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LumeaPlay-apk
+          path: LumeaPlay.apk
+
+      - name: Publicar versão
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete app --yes --cleanup-tag || true
+          gh release create app LumeaPlay.apk \
+            --title "LumeaPlay 1.0.${{ github.run_number }}" \
+            --notes "APK gerado automaticamente. Instale em Android TV, Fire TV, TV Box ou celular." \
+            --latest
