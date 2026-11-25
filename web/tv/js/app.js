@@ -344,7 +344,7 @@
       '<div class="lg-copy"><div class="logo big"><b></b><span>Lumea<em>Play</em></span></div><h1>Tudo o que você ama<br><span>em um só lugar.</span></h1>' +
       '<div class="feat"><div>' + IC.tv + '<b>Ao vivo</b><small>canais da TV</small></div><div>' + IC.film + '<b>Filmes</b><small>lançamentos</small></div><div>' + IC.ser + '<b>Séries</b><small>todas as temporadas</small></div></div></div></div>' +
       '<div class="lg-right"><div class="lg-card"><span class="step">ATIVAÇÃO</span><h2>Digite seu código</h2><p class="sub" id="amsg"></p><div class="code9" id="acode"></div>' +
-      '<div class="kp" id="akp"></div><div class="enter" id="aent">Entrar →</div><div class="dev"><span>ID DO APARELHO</span><b>' + esc(deviceId()) + '</b></div></div></div></div></div>';
+      '<div class="kp" id="akp"></div><div class="enter" id="aent">Entrar →</div><div class="alt" id="am3u">🔗 Entrar com link M3U</div><div class="dev"><span>ID DO APARELHO</span><b>' + esc(deviceId()) + '</b></div></div></div></div></div>';
     this.draw();
   };
   ActScreen.prototype.draw = function () {
@@ -353,7 +353,7 @@
     $('#acode').innerHTML = h;
     var keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '⌫', '0', '✓'], f = this.f;
     $('#akp').innerHTML = keys.map(function (k, i) { return '<div class="' + (i === f ? 'on ' : '') + (k === '⌫' ? 'del' : k === '✓' ? 'okk' : '') + '">' + k + '</div>'; }).join('');
-    $('#aent').classList.toggle('on', f === 12);
+    $('#aent').classList.toggle('on', f === 12); $('#am3u').classList.toggle('on', f === 13);
     var m = $('#amsg'); m.textContent = this.msg || 'São 9 números que você recebeu do seu revendedor.'; m.classList.toggle('err', !!this.msg);
   };
   ActScreen.prototype.type = function (d) { if (this.code.length < 9) { this.code += d; this.msg = ''; this.draw(); if (this.code.length === 9) { this.f = 12; this.draw(); } } };
@@ -362,9 +362,10 @@
     var f = this.f;
     if (k === 'left' && f < 12 && f % 3 > 0) this.f--;
     else if (k === 'right' && f < 12 && f % 3 < 2) this.f++;
-    else if (k === 'up') { if (f === 12) this.f = 10; else if (f >= 3) this.f -= 3; }
-    else if (k === 'down') { if (f < 9) this.f += 3; else if (f < 12) this.f = 12; }
+    else if (k === 'up') { if (f === 13) this.f = 12; else if (f === 12) this.f = 10; else if (f >= 3) this.f -= 3; }
+    else if (k === 'down') { if (f < 9) this.f += 3; else if (f < 12) this.f = 12; else if (f === 12) this.f = 13; }
     else if (k === 'ok') {
+      if (f === 13) { App.push(new M3UScreen()); return true; }
       if (f === 9) { this.code = this.code.slice(0, -1); this.msg = ''; }
       else if (f === 11 || f === 12) { this.submit(); return true; }
       else this.type(['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0'][f]);
@@ -389,6 +390,62 @@
     }).catch(function () { loading(); self.msg = 'Sem conexão com a internet. Verifique e tente de novo.'; self.shake(); });
   };
   ActScreen.prototype.shake = function () { this.draw(); var c = $('#acode'); c.classList.remove('shake'); void c.offsetWidth; c.classList.add('shake'); };
+
+  /* ===== Entrar com link M3U ===== */
+  var MK = [];
+  (function () {
+    var rows = ['1234567890', 'qwertyuiop', 'asdfghjkl:', 'zxcvbnm./-', '_?=&@%+~#,'];
+    rows.forEach(function (r, ri) { r.split('').forEach(function (c, ci) { MK.push({ t: c, v: c, r: ri, c0: ci, c1: ci }); }); });
+    [['⇧ ABC', 'shift'], ['http://', 'http://'], ['https://', 'https://'], ['.com', '.com'], ['⌫ Apagar', 'del']].forEach(function (x, i) { MK.push({ t: x[0], v: x[1], r: 5, c0: i * 2, c1: i * 2 + 1 }); });
+    [[':8080', ':8080'], ['get.php?', 'get.php?'], ['username=', 'username='], ['&password=', '&password='], ['Limpar', 'clear']].forEach(function (x, i) { MK.push({ t: x[0], v: x[1], r: 6, c0: i * 2, c1: i * 2 + 1 }); });
+    MK.push({ t: 'Carregar lista →', v: 'go', r: 7, c0: 0, c1: 9 });
+  })();
+  function M3UScreen() { this.url = store.get('lastM3U', ''); this.k = 0; this.up = false; this.msg = ''; }
+  M3UScreen.prototype.mount = function (r) {
+    r.innerHTML = '<div class="screen m3u"><div class="logo"><b></b><span>Lumea<em>Play</em></span></div><div class="mcard"><span class="step">LINK M3U</span><h2>Entrar com sua lista</h2><p class="sub" id="mmsg"></p>' +
+      '<div class="murl" id="murl"></div><div class="mkb" id="mkb"></div><p class="mtip">Dica: com teclado ou celular conectado você também pode digitar ou colar o link. <b>Voltar</b> retorna para o código.</p></div></div>';
+    this.draw();
+  };
+  M3UScreen.prototype.draw = function () {
+    var self = this, u = this.url;
+    $('#murl').innerHTML = (u ? '<span>' + esc(u) + '</span>' : '<em>http://servidor:porta/get.php?username=...&amp;password=...&amp;type=m3u_plus</em>') + '<i class="cur"></i>';
+    $('#mkb').innerHTML = MK.map(function (x, i) {
+      var t = x.t.length === 1 && self.up ? x.t.toUpperCase() : x.t;
+      return '<div style="grid-row:' + (x.r + 1) + ';grid-column:' + (x.c0 + 1) + '/' + (x.c1 + 2) + '" class="' + (i === self.k ? 'on ' : '') + (x.v === 'go' ? 'go ' : '') + (x.v === 'shift' && self.up ? 'act ' : '') + (x.t.length > 1 ? 'sp' : '') + '">' + esc(t) + '</div>';
+    }).join('');
+    var m = $('#mmsg'); m.textContent = this.msg || 'Digite o link da sua lista (M3U) pelo controle.'; m.classList.toggle('err', !!this.msg);
+  };
+  M3UScreen.prototype.typeChar = function (t) { this.url = (this.url + t).replace(/[\r\n\t]/g, '').slice(0, 1000); this.msg = ''; this.draw(); };
+  M3UScreen.prototype.submit = function () {
+    var u = this.url.trim();
+    if (!/^https?:\/\/[^\s]+\.[^\s]+|^https?:\/\/\d+\.\d+\.\d+\.\d+/i.test(u)) { this.msg = 'Link inválido. Ele precisa começar com http:// ou https://'; this.draw(); return; }
+    store.set('lastM3U', u);
+    Session.set({ code: 'm3u', name: 'Lista própria', m3u: u, expiresAt: null, status: 'ativo' });
+    startMain();
+  };
+  M3UScreen.prototype.key = function (k) {
+    var cur = MK[this.k], self = this;
+    function row(r) { return MK.filter(function (x) { return x.r === r; }); }
+    if (/^d\d$/.test(k)) { this.typeChar(k[1]); return true; }
+    if (k === 'left' || k === 'right') {
+      var rr = row(cur.r), idx = rr.indexOf(cur) + (k === 'left' ? -1 : 1);
+      if (idx >= 0 && idx < rr.length) this.k = MK.indexOf(rr[idx]);
+    } else if (k === 'up' || k === 'down') {
+      var tr = cur.r + (k === 'up' ? -1 : 1); if (tr < 0 || tr > 7) return true;
+      var col = cur.r === 7 ? 4 : cur.c0, t = row(tr).filter(function (x) { return x.c0 <= col && x.c1 >= col; })[0];
+      if (t) this.k = MK.indexOf(t);
+    } else if (k === 'ok') {
+      var v = cur.v;
+      if (v === 'go') { this.submit(); return true; }
+      if (v === 'shift') this.up = !this.up;
+      else if (v === 'del') this.url = this.url.slice(0, -1);
+      else if (v === 'clear') this.url = '';
+      else this.url += (v.length === 1 && this.up) ? v.toUpperCase() : v;
+      this.msg = '';
+    } else if (k === 'back') { if (this.url && false) { } return false; }
+    else return false;
+    this.draw(); return true;
+  };
 
   /* ===== Perfis ===== */
   function ProfScreen(fromSettings) { this.f = 0; this.edit = false; this.fromSettings = fromSettings; }
@@ -795,7 +852,7 @@
     var body = '';
     if (this.o === 0) {
       body = '<div class="plan"><div class="logo"><b></b></div><div><h3>' + (dl === 0 ? 'Assinatura vencida' : 'Assinatura ativa') + '</h3><p>' + (s.expiresAt ? 'Válida até ' + fmtDate(s.expiresAt) : 'Sem data de vencimento') + '</p></div>' + (dl != null ? '<div class="d"><b>' + dl + '</b><small>' + (dl === 1 ? 'dia restante' : 'dias restantes') + '</small></div>' : '') + '</div>' +
-        '<div class="pan"><div class="li"><div><small>CÓDIGO DE ACESSO</small>' + (s.code ? s.code.slice(0, 3) + '-•••-' + s.code.slice(6) : '—') + '</div><span class="g">● Ativo</span></div>' +
+        '<div class="pan"><div class="li"><div><small>CÓDIGO DE ACESSO</small>' + (s.code === 'm3u' ? 'Link M3U próprio' : s.code ? s.code.slice(0, 3) + '-•••-' + s.code.slice(6) : '—') + '</div><span class="g">● Ativo</span></div>' +
         (s.name ? '<div class="li"><div><small>CLIENTE</small>' + esc(s.name) + '</div></div>' : '') +
         '<div class="li"><div><small>ID DO APARELHO</small>' + esc(deviceId()) + '</div><span class="m">Este aparelho</span></div>' +
         '<div class="li"><div><small>SUA LISTA</small>' + cnt + '</div><span class="m">' + (upd ? 'Atualizada ' + fmtDate(upd.toISOString()) + ' ' + pad(upd.getHours()) + ':' + pad(upd.getMinutes()) : '') + '</span></div>' +
@@ -892,7 +949,7 @@
   function boot() {
     var s = Session.get();
     if (!s) { App.show(new ActScreen()); return; }
-    if (s.m3u === 'demo:' || !fbReady()) { startMain(); return; }
+    if (s.m3u === 'demo:' || s.code === 'm3u' || !fbReady()) { startMain(); return; }
     loading('Verificando seu acesso…');
     getCode(s.code).then(function (d) {
       loading();
@@ -922,11 +979,14 @@
     return null;
   }
   document.addEventListener('keydown', function (e) {
+    var tp = App.top();
+    if (tp && tp.typeChar && !Modal.open && e.key && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && !/^\d$/.test(e.key)) { e.preventDefault(); tp.typeChar(e.key); return; }
     var k = keyName(e); if (!k) return;
     e.preventDefault();
     var handled = App.key(k);
     if (!handled && k === 'back') exitApp();
   });
+  document.addEventListener('paste', function (e) { var tp = App.top(), t = (e.clipboardData || window.clipboardData).getData('text'); if (tp && tp.typeChar && t) { e.preventDefault(); tp.typeChar(t.trim()); } });
   try { if (window.tizen && tizen.tvinputdevice) ['ChannelUp', 'ChannelDown', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].forEach(function (k) { try { tizen.tvinputdevice.registerKey(k); } catch (e) { } }); } catch (e) { }
 
   /* ponte com o Android */
