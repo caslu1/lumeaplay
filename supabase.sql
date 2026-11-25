@@ -117,3 +117,6 @@ grant execute on function public.lp_check(text, text, text) to anon, authenticat
 revoke all on function public.lp_replace_dns(text, text) from public, anon;
 grant execute on function public.lp_replace_dns(text, text) to authenticated;
 grant select, insert, update, delete on public.lp_codes to authenticated;
+revoke all on function public.lp_is_admin() from public, anon;
+grant execute on function public.lp_is_admin() to authenticated;
+revoke all on public.lp_codes, public.lp_admins, public.lp_attempts from anon;
