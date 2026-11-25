@@ -49,7 +49,8 @@ class MainActivity : Activity() {
             .build()
 
         web = WebView(this)
-        web.setBackgroundColor(Color.parseColor("#050816"))
+        web.setBackgroundColor(Color.parseColor("#0A0C10"))
+        web.setLayerType(View.LAYER_TYPE_HARDWARE, null)
         web.isFocusable = true
         web.isFocusableInTouchMode = true
         web.isVerticalScrollBarEnabled = false
@@ -134,6 +135,11 @@ class MainActivity : Activity() {
     /** Baixa a lista M3U pelo app (evita bloqueio de CORS) e guarda uma cópia para abrir rápido. */
     private fun proxy(u: Uri): WebResourceResponse {
         val target = u.getQueryParameter("url") ?: return text(400, "sem url")
+        if (u.getQueryParameter("mem") == "1") {
+            return try {
+                WebResourceResponse("application/json", "utf-8", ByteArrayInputStream(fetchSmall(target)))
+            } catch (e: Exception) { text(502, e.message ?: "erro") }
+        }
         val useCache = u.getQueryParameter("cache") == "1"
         val file = File(cacheDir, "m3u_" + sha1(target))
         if (useCache && file.exists() && System.currentTimeMillis() - file.lastModified() < 6 * 3600_000L) {
@@ -168,6 +174,36 @@ class MainActivity : Activity() {
             c.inputStream.use { inp -> out.outputStream().use { o -> inp.copyTo(o, 64 * 1024) } }
             c.disconnect()
             return
+        }
+        throw Exception("muitos redirecionamentos")
+    }
+
+    /** Busca pequena (guia de programação), direto na memória, com limite de 3 MB. */
+    private fun fetchSmall(start: String): ByteArray {
+        var url = start
+        for (i in 0 until 5) {
+            val c = URL(url).openConnection() as HttpURLConnection
+            c.instanceFollowRedirects = false
+            c.connectTimeout = 8000
+            c.readTimeout = 10000
+            c.setRequestProperty("User-Agent", UA)
+            val code = c.responseCode
+            if (code in 300..399) {
+                val loc = c.getHeaderField("Location") ?: throw Exception("redirect")
+                url = URL(URL(url), loc).toString(); c.disconnect(); continue
+            }
+            if (code != 200) { c.disconnect(); throw Exception("HTTP $code") }
+            val out = java.io.ByteArrayOutputStream()
+            c.inputStream.use { inp ->
+                val buf = ByteArray(16 * 1024)
+                while (true) {
+                    val n = inp.read(buf); if (n < 0) break
+                    out.write(buf, 0, n)
+                    if (out.size() > 3 * 1024 * 1024) throw Exception("grande demais")
+                }
+            }
+            c.disconnect()
+            return out.toByteArray()
         }
         throw Exception("muitos redirecionamentos")
     }

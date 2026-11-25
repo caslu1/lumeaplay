@@ -19,7 +19,8 @@
   var GRADS = ['#6a5cff', '#3b82f6', '#06b6d4', '#8b5cf6', '#2563eb', '#0ea5e9', '#7c3aed', '#14b8a6'];
   function colorOf(id) { var h = 0; id = String(id); for (var i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0; return GRADS[Math.abs(h) % GRADS.length]; }
   var ARTC = {};
-  function art(id) { var h = Math.abs(parseInt(String(id).slice(0, 6), 36) || 0) % 24; if (!ARTC[h]) ARTC[h] = scene(TYPES[h % TYPES.length], h + 3, 400, 600, false); return ARTC[h]; }
+  var ARTS = ['#1a1f2b', '#1d1b26', '#17212a', '#211d1d', '#1b2224', '#201f29'];
+  function art(id) { var h = Math.abs(parseInt(String(id).slice(0, 6), 36) || 0) % ARTS.length; return ARTC[h] || (ARTC[h] = 'linear-gradient(165deg,' + ARTS[h] + ',#0e1015)'); }
   function cssUrl(u) { return "url('" + String(u).replace(/'/g, '%27').replace(/[\n\r]/g, '') + "')"; }
   function pimg(u) { return u ? '<img src="' + esc(u) + '" onerror="this.parentNode.classList.remove(\'img\');this.remove()">' : ''; }
   function img(u, cls) { return u ? '<img' + (cls ? ' class="' + cls + '"' : '') + ' src="' + esc(u) + '" onerror="this.remove()">' : ''; }
@@ -189,7 +190,7 @@
     if (it.type === 'live') addRecent(it.id);
     if (it.type === 'ep') { var last = Prof.get('lastEp', {}); last[it.series] = it.id; Prof.set('lastEp', last); }
     PlayCtx = { item: it, list: list };
-    var payload = { url: it.url, title: titleFor(it), sub: it.group || '', id: it.id, type: it.type === 'live' ? 'live' : 'vod', start: Math.floor((opts.start || 0) * 1000), index: idx, resize: store.get('resize', 'fit') };
+    var payload = { url: it.url, title: titleFor(it), sub: it.group || '', id: it.id, type: it.type === 'live' ? 'live' : 'vod', start: Math.floor((opts.start || 0) * 1000), index: idx, resize: store.get('resize', 'fit'), buf: store.get('buf', 'alto') };
     if (N && N.play) {
       try { N.setPlaylist(JSON.stringify(list.map(function (x) { return { u: x.url, n: x.name, l: x.logo || '', id: x.id, num: x.num || 0 }; }))); } catch (e) { }
       N.play(JSON.stringify(payload));
@@ -511,9 +512,7 @@
   HomeScreen.prototype.notify = function (w, a) { var t = this.tabs[this.tab]; if (t && t.notify) t.notify(w, a); };
 
   /* ===== Aba Canais ===== */
-  var CAT_IC = [[/favorit/i, '⭐'], [/recent/i, '🕘'], [/esport|sport|futebol|premiere|combate|ufc|nba/i, '⚽'], [/not[ií]c|news|jornal/i, '📰'], [/infantil|kids|desenho|crian/i, '🧸'], [/filme|movie|cine|telecine|hbo/i, '🎬'], [/s[ée]rie/i, '🍿'], [/document|discovery|natgeo|hist/i, '🌍'], [/m[uú]sica|music|show|r[aá]dio/i, '🎵'], [/relig|gospel|cat[oó]lic|evang/i, '⛪'], [/abert|globo|sbt|record|band/i, '📡'], [/adult|xxx|\+18/i, '🔞'], [/4k|uhd/i, '✨'], [/variedad|entreten/i, '🎭']];
-  function catIcon(n) { for (var i = 0; i < CAT_IC.length; i++) if (CAT_IC[i][0].test(n)) return CAT_IC[i][1]; return '📺'; }
-  function logoHTML(it) { return '<span class="lgo" style="background:linear-gradient(135deg,' + colorOf(it.id) + ',#0b1440)">' + esc(initials(it.name)) + img(it.logo) + '</span>'; }
+  function logoHTML(it) { return '<span class="lgo">' + esc(initials(it.name)) + img(it.logo) + '</span>'; }
   function quality(n) {
     n = String(n || '');
     if (/\b(4k|uhd|2160p?)\b/i.test(n)) return '4K'; if (/\b(fhd|1080p?)\b/i.test(n)) return 'FHD';
@@ -529,27 +528,87 @@
     redo: '<svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4"/></svg>'
   };
 
+  /* ---------- guia de programação (EPG) ---------- */
+  function b64(s) { if (!s) return ''; try { return decodeURIComponent(escape(atob(s))); } catch (e) { try { return atob(s); } catch (e2) { return String(s); } } }
+  function xtream(url) { var m = String(url || '').match(/^(https?:\/\/[^\/?#]+)\/(?:live\/)?([^\/?#]+)\/([^\/?#]+)\/(\d+)(?:\.[a-z0-9]+)?(?:[?#].*)?$/i); return m ? { base: m[1], user: m[2], pass: m[3], id: m[4] } : null; }
+  function hm(t) { var d = new Date(t); return pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+  var DEMO_SHOWS = ['Jornal da Manhã', 'Futebol ao Vivo', 'Mesa Redonda', 'Cine Tarde', 'Documentário', 'Show da Noite', 'Esporte Total', 'Novela das Nove', 'Desenhos', 'Telejornal'];
+  function demoEpg(it) {
+    var h = 0, id = String(it.id) + it.name; for (var z = 0; z < id.length; z++) h = (h * 31 + id.charCodeAt(z)) >>> 0; var s = Date.now() - (h % 50 + 5) * 60000, out = [];
+    for (var k = 0; k < 6; k++) { var len = (30 + ((h + k * 7) % 4) * 30) * 60000; out.push({ t: DEMO_SHOWS[(h + k) % DEMO_SHOWS.length], d: 'Programa de exemplo da lista de demonstração.', s: s, e: s + len }); s += len; }
+    return out;
+  }
+  var EPG = {
+    c: {}, q: [], run: 0, cb: null,
+    get: function (it) { var e = it && this.c[it.id]; if (!e) return null; var now = Date.now(); e.list = e.list.filter(function (p) { return p.e > now; }); return e; },
+    want: function (it, front) {
+      if (!it || it.type !== 'live') return;
+      var e = this.c[it.id]; if (e && Date.now() - e.t < 15 * 60000) return;
+      var i = this.q.indexOf(it); if (i >= 0) this.q.splice(i, 1);
+      if (front) this.q.unshift(it); else this.q.push(it);
+      if (this.q.length > 24) this.q.length = 24;
+      this.pump();
+    },
+    pump: function () {
+      var self = this;
+      while (this.run < 3 && this.q.length) {
+        (function (it) {
+          self.run++;
+          self.load(it).then(function (l) { self.c[it.id] = { t: Date.now(), list: l }; }, function () { self.c[it.id] = { t: Date.now(), list: [] }; })
+            .then(function () { self.run--; if (self.cb) self.cb(it); self.pump(); });
+        })(this.q.shift());
+      }
+    },
+    load: function (it) {
+      var s = Session.get();
+      if (s && s.m3u === 'demo:') return Promise.resolve(demoEpg(it));
+      var x = xtream(it.url); if (!x) return Promise.resolve([]);
+      var api = x.base + '/player_api.php?username=' + encodeURIComponent(x.user) + '&password=' + encodeURIComponent(x.pass) + '&action=get_short_epg&stream_id=' + x.id + '&limit=8';
+      return fetch(N ? '/proxy?mem=1&url=' + encodeURIComponent(api) : api).then(function (r) { if (!r.ok) throw new Error('epg'); return r.json(); }).then(function (j) {
+        return ((j && j.epg_listings) || []).map(function (p) { return { t: b64(p.title), d: b64(p.description), s: +p.start_timestamp * 1000, e: +p.stop_timestamp * 1000 }; })
+          .filter(function (p) { return p.t && p.e > Date.now(); }).sort(function (a, b) { return a.s - b.s; });
+      });
+    }
+  };
+  function nowProg(it) { var e = EPG.get(it); if (!e || !e.list.length) return null; return e.list[0].s <= Date.now() ? e.list[0] : null; }
+  function pct(p) { return Math.max(0, Math.min(100, (Date.now() - p.s) / (p.e - p.s) * 100)); }
+
   function LiveTab() { this.mode = 'cats'; this.ci = 0; this.zone = 'list'; this.bi = 0; this.chIdx = {}; }
   LiveTab.prototype.cats = function () {
     var live = DATA.live.filter(allowed), byId = DATA.byId;
     var fav = favs().map(function (id) { return byId[id]; }).filter(function (x) { return x && x.type === 'live' && allowed(x); });
     var rec = Prof.get('rec', []).map(function (id) { return byId[id]; }).filter(function (x) { return x && allowed(x); });
-    var out = [{ name: 'Favoritos', items: fav, ic: '⭐' }, { name: 'Recentes', items: rec, ic: '🕘' }, { name: 'Todos os canais', items: live, ic: '📺' }];
-    M3U.groups(live).forEach(function (g) { out.push({ name: g.name, items: g.items, ic: catIcon(g.name) }); });
+    var out = [{ name: 'Favoritos', items: fav }, { name: 'Recentes', items: rec }, { name: 'Todos os canais', items: live }];
+    M3U.groups(live).forEach(function (g) { out.push({ name: g.name, items: g.items }); });
     return out;
   };
   LiveTab.prototype.mount = function (el) {
+    var self = this;
     el.innerHTML = '<div class="lv-left"><div class="lv-head" id="lvh"></div><div id="lvl" class="lv-list"></div></div><div class="lv-pv" id="pv"></div><div class="lv-now" id="lvn"></div><div class="lv-next" id="lvx"></div>';
     this.C = this.cats();
     if (this.first !== false) { this.first = false; this.ci = this.C[1].items.length ? 1 : this.C[0].items.length ? 0 : 2; }
+    EPG.cb = function (it) {
+      if (!document.getElementById('lvl') || !self.vl) return;
+      clearTimeout(self.rt);
+      self.rt = setTimeout(function () { if (self.mode === 'chs') self.vl.refresh(); self.preview(); }, 150);
+    };
     this.build();
+  };
+  LiveTab.prototype.wantVisible = function () {
+    var self = this; clearTimeout(this.wt);
+    this.wt = setTimeout(function () {
+      if (!self.vl) return;
+      var cur = self.current(); if (cur) EPG.want(cur, true);
+      if (self.mode !== 'chs') return;
+      for (var k = self.vl.top; k < Math.min(self.vl.items.length, self.vl.top + 9); k++) EPG.want(self.vl.items[k]);
+    }, 180);
   };
   LiveTab.prototype.build = function () {
     var self = this;
     if (this.mode === 'cats') {
       $('#lvh').innerHTML = '<span class="lbl">Categorias</span><em>' + (this.C.length - 3) + '</em>';
       this.vl = new VList($('#lvl'), {
-        h: 7.2, render: function (c) { return '<div class="lc cat"><div class="th ic">' + c.ic + '</div><div class="tx"><b class="ell">' + esc(c.name) + '</b><small>' + c.items.length + (c.items.length === 1 ? ' canal' : ' canais') + '</small></div><div class="ar">›</div></div>'; },
+        h: 5.4, render: function (c) { return '<div class="lc cat"><div class="tx"><b class="ell">' + esc(c.name) + '</b></div><span class="cnt">' + c.items.length + '</span><div class="ar">›</div></div>'; },
         onFocus: function () { self.preview(); }
       });
       this.vl.set(this.C, this.ci);
@@ -557,51 +616,46 @@
       var c = this.C[this.ci];
       $('#lvh').innerHTML = '<span class="bk">‹</span><span class="lbl ell">' + esc(c.name) + '</span><em>' + c.items.length + ' canais</em>';
       this.vl = new VList($('#lvl'), {
-        h: 8.6, empty: c.name === 'Favoritos' ? 'Nenhum favorito ainda. Escolha um canal e aperte ▶ → Favoritar.' : 'Nenhum canal aqui.',
+        h: 8, empty: c.name === 'Favoritos' ? 'Nenhum favorito ainda. Escolha um canal, aperte ▶ e depois Favoritar.' : 'Nenhum canal aqui.',
         render: function (it) {
-          var q = quality(it.name);
-          return '<div class="lc"><div class="th">' + logoHTML(it) + '</div><div class="tx"><div class="nm">' + (q ? '<em class="q">' + q + '</em>' : '') + '<b class="ell">' + esc(it.name) + '</b></div><small class="ell">' + esc(it.group) + '</small><small class="no">Canal ' + (it.num || '') + '</small></div><div class="ics">' + (isFav(it.id) ? '<i class="fav">★</i>' : '<i>☆</i>') + '</div></div>';
+          var q = quality(it.name), p = nowProg(it);
+          return '<div class="lc"><div class="th">' + logoHTML(it) + '</div><div class="tx"><div class="nm"><span class="no">' + (it.num || '') + '</span><b class="ell">' + esc(it.name) + '</b>' + (q ? '<em class="q">' + q + '</em>' : '') + (isFav(it.id) ? '<i class="fv">★</i>' : '') + '</div>' +
+            (p ? '<small class="ell">' + esc(p.t) + '</small><div class="pb"><i style="width:' + pct(p) + '%"></i></div>' : '<small class="ell dim">' + esc(it.group) + '</small>') + '</div></div>';
         },
-        onFocus: function () { self.preview(); }
+        onFocus: function () { self.preview(); self.wantVisible(); }
       });
       this.vl.set(c.items, this.chIdx[this.ci] || 0);
     }
     this.vl.setActive(this.focused && this.zone === 'list');
-    this.preview();
+    this.preview(); this.wantVisible();
   };
   LiveTab.prototype.current = function () {
     if (this.mode === 'chs') return this.vl.cur();
     var r = Prof.get('rec', []); return r.length ? DATA.byId[r[0]] : null;
   };
-  LiveTab.prototype.upcoming = function (it) {
-    if (this.mode === 'cats') { var byId = DATA.byId; return Prof.get('rec', []).map(function (id) { return byId[id]; }).filter(function (x) { return x && x !== it && allowed(x); }).slice(0, 4); }
-    var list = this.C[this.ci].items, i = list.indexOf(it), out = [];
-    for (var k = 1; k <= 4 && k < list.length; k++) out.push(list[(i + k) % list.length]);
-    return out;
-  };
   LiveTab.prototype.preview = function () {
     var it = this.current(), pv = $('#pv'), self = this;
     if (!pv) return;
     if (!it) {
-      pv.innerHTML = '<div class="pv-blur" style="background:linear-gradient(135deg,#1d4ed8,#050816)"></div><div class="pv-c"><div class="logo big"><b></b><span>Lumea<em>Play</em></span></div></div><div class="pv-hint"><span><b>OK</b>Abrir categoria</span></div>';
-      $('#lvn').innerHTML = '<div class="sec">Canais ao vivo</div><h2>' + DATA.live.length + ' canais disponíveis</h2><p>Escolha uma categoria à esquerda e aperte OK para ver os canais.</p>';
-      $('#lvx').innerHTML = '<div class="sec">Recentes</div><p class="mut">Os canais que você assistir aparecem aqui.</p>';
+      pv.innerHTML = '<div class="pv-c"><div class="logo big"><b></b><span>Lumea<em>Play</em></span></div></div><div class="pv-hint"><span><b>OK</b>Abrir categoria</span></div>';
+      $('#lvn').innerHTML = '<div class="sec">Canais ao vivo</div><h2>' + DATA.live.length + ' canais disponíveis</h2><p class="desc">Escolha uma categoria à esquerda e aperte OK para ver os canais.</p>';
+      $('#lvx').innerHTML = '<div class="sec">Programação</div><p class="mut">Escolha um canal para ver o que está passando e o que vem a seguir.</p>';
       this.btns = []; return;
     }
-    var q = quality(it.name), logo = it.logo, cats = this.mode === 'cats';
-    pv.innerHTML = (logo ? '<div class="pv-blur" style="background-image:' + esc(cssUrl(logo)) + '"></div>' : '<div class="pv-blur" style="background:linear-gradient(135deg,' + colorOf(it.id) + ',#050816)"></div>') +
-      '<div class="pv-c">' + (logo ? '<img src="' + esc(logo) + '" onerror="this.outerHTML=\'<span class=ini>' + esc(initials(it.name)) + '</span>\'">' : '<span class="ini">' + esc(initials(it.name)) + '</span>') + '</div>' +
-      '<div class="pv-tags"><span class="live">AO VIVO</span>' + (q ? '<span>' + q + '</span>' : '') + (it.num ? '<span>Nº ' + it.num + '</span>' : '') + '</div>' +
-      '<div class="pv-hint">' + (cats ? '<span><b>OK</b>Abrir categoria</span><span><b>▶</b>Continuar assistindo</span>' : '<span><b>OK</b>Assistir</span><span><b>▶</b>Funções</span><span><b>◀</b>Categorias</span>') + '</div>';
-    this.btns = cats ? [{ t: SV.play + 'Continuar', fn: 'play' }] : [{ t: SV.play + 'Assistir', fn: 'play' }, { t: SV.star + (isFav(it.id) ? 'Remover dos favoritos' : 'Favoritar'), fn: 'fav' }];
-    $('#lvn').innerHTML = '<div class="sec">' + (cats ? 'Último canal assistido' : 'Agora no ar') + '</div><h2 class="ell">' + esc(it.name) + '</h2><p class="ell">' + esc(it.group) + (it.num ? ' • Canal ' + it.num : '') + '</p>' +
-      '<div class="tiles"><div class="tl">' + SV.folder + '<div><small>Categoria</small><b class="ell">' + esc(it.group) + '</b></div></div><div class="tl">' + SV.hd + '<div><small>Qualidade</small><b>' + (q || '—') + '</b></div></div><div class="tl">' + SV.star + '<div><small>Favorito</small><b>' + (isFav(it.id) ? 'Sim' : 'Não') + '</b></div></div></div>' +
-      '<div class="sub2">Funções do canal</div><div class="fns">' + this.btns.map(function (b, i) { return '<div class="fn ' + (i === 0 ? 'pri ' : '') + (self.zone === 'btn' && self.bi === i ? 'on' : '') + '">' + b.t + '</div>'; }).join('') + '</div>';
-    var up = this.upcoming(it);
-    $('#lvx').innerHTML = '<div class="sec">' + (cats ? 'Recentes' : 'Próximos na lista') + '</div>' + (up.length ? up.map(function (x) {
-      var qq = quality(x.name);
-      return '<div class="up"><span class="un">' + (x.num || '') + '</span>' + logoHTML(x) + '<div class="tx"><b class="ell">' + esc(x.name) + '</b><small class="ell">' + esc(x.group) + '</small></div>' + (qq ? '<em class="q">' + qq + '</em>' : '') + '</div>';
-    }).join('') : '<p class="mut">Nada por aqui ainda.</p>');
+    EPG.want(it, true);
+    var q = quality(it.name), cats = this.mode === 'cats', e = EPG.get(it), list = e ? e.list : null, p = nowProg(it);
+    pv.innerHTML = '<div class="pv-c">' + (it.logo ? '<img src="' + esc(it.logo) + '" onerror="this.outerHTML=\'<span class=ini>' + esc(initials(it.name)) + '</span>\'">' : '<span class="ini">' + esc(initials(it.name)) + '</span>') + '</div>' +
+      '<div class="pv-tags"><span class="live">AO VIVO</span>' + (q ? '<span>' + q + '</span>' : '') + (it.num ? '<span>Canal ' + it.num + '</span>' : '') + '</div>' +
+      '<div class="pv-hint">' + (cats ? '<span><b>OK</b>Abrir categoria</span><span><b>▶</b>Continuar assistindo</span>' : '<span><b>OK</b>Assistir</span><span><b>▶</b>Opções</span><span><b>◀</b>Categorias</span>') + '</div>';
+    this.btns = cats ? [{ t: SV.play + 'Continuar', fn: 'play' }] : [{ t: SV.play + 'Assistir', fn: 'play' }, { t: isFav(it.id) ? 'Remover dos favoritos' : 'Favoritar', fn: 'fav' }];
+    $('#lvn').innerHTML = '<div class="sec">' + (cats ? 'Último canal assistido' : 'Agora no ar') + '</div>' +
+      '<h2 class="ell">' + esc(p ? p.t : it.name) + '</h2><p class="sub ell">' + esc(it.name) + (p ? ' · ' + hm(p.s) + ' – ' + hm(p.e) : ' · ' + esc(it.group)) + '</p>' +
+      (p ? '<div class="pbar"><i style="width:' + pct(p) + '%"></i></div><p class="desc">' + esc(p.d || 'Sem descrição.') + '</p>' : '<p class="desc">' + (e ? 'Este canal não tem guia de programação.' : 'Carregando programação…') + '</p>') +
+      '<div class="fns">' + this.btns.map(function (b, i) { return '<div class="fn ' + (i === 0 ? 'pri ' : '') + (self.zone === 'btn' && self.bi === i ? 'on' : '') + '">' + b.t + '</div>'; }).join('') + '</div>';
+    var next = list ? list.slice(p ? 1 : 0, (p ? 1 : 0) + 5) : [];
+    $('#lvx').innerHTML = '<div class="sec">A seguir</div>' + (next.length ? next.map(function (x) {
+      return '<div class="gp"><span class="tm">' + hm(x.s) + '</span><div class="tx"><b class="ell">' + esc(x.t) + '</b><small>' + Math.round((x.e - x.s) / 60000) + ' min</small></div></div>';
+    }).join('') : '<p class="mut">' + (e ? 'Sem programação disponível.' : 'Carregando…') + '</p>');
   };
   LiveTab.prototype.focus = function (on) { this.focused = on; if (!on) this.zone = 'list'; if (this.vl) this.vl.setActive(on && this.zone === 'list'); this.preview(); };
   LiveTab.prototype.act = function (fn) {
@@ -705,7 +759,8 @@
     var m = $('#rmark'); if (m) m.style.opacity = this.focused ? 1 : 0;
     this.hero();
   };
-  VodTab.prototype.hero = function () {
+  VodTab.prototype.hero = function () { var self = this; clearTimeout(this.ht); this.ht = setTimeout(function () { self.heroNow(); }, 110); };
+  VodTab.prototype.heroNow = function () {
     var st = this.strips && this.strips[this.r]; if (!st) return;
     var it = st.cur(); if (!it) return;
     $('#hc').innerHTML = heroHTML(it);
@@ -819,18 +874,19 @@
   SeriesScreen.prototype.notify = function (w) { if (w === 'progress') this.mount(App.root()); };
 
   /* ===== Configurações ===== */
-  var OPTS = ['Minha conta', 'Atualizar lista', 'Player', 'Conteúdo adulto', 'Perfis', 'Trocar código'];
+  var OPTS = ['Minha conta', 'Atualizar lista', 'Formato da tela', 'Anti-travamento', 'Conteúdo adulto', 'Perfis', 'Trocar código'];
   function SettingsTab() { this.o = 0; this.zone = 'opts'; this.c = 0; }
   SettingsTab.prototype.mount = function (el) { this.el = el; this.draw(); };
   SettingsTab.prototype.focus = function (on) { this.focused = on; if (!on) this.zone = 'opts'; this.draw(); };
   SettingsTab.prototype.controls = function () {
     var self = this;
     switch (this.o) {
-      case 1: return { type: 'btn', items: [{ t: '🔄 Atualizar agora', fn: function () { reloadList(); } }] };
+      case 1: return { type: 'btn', items: [{ t: 'Atualizar agora', fn: function () { reloadList(); } }] };
       case 2: var rz = store.get('resize', 'fit'); return { type: 'choice', items: [['fit', 'Ajustar à tela'], ['fill', 'Preencher (cortar bordas)'], ['zoom', 'Esticar']].map(function (x) { return { t: x[1], s: rz === x[0], fn: function () { store.set('resize', x[0]); self.draw(); toast('Formato da tela: ' + x[1]); } }; }) };
-      case 3: var ad = store.get('adult', false); return { type: 'choice', items: [{ t: 'Oculto', s: !ad, fn: function () { store.set('adult', false); refreshAll(); self.draw(); } }, { t: 'Visível', s: ad, fn: function () { Modal.show('Mostrar conteúdo adulto?', 'Categorias adultas vão aparecer em todos os perfis, menos no Kids.', [{ t: 'Mostrar', fn: function () { store.set('adult', true); refreshAll(); self.draw(); } }, { t: 'Cancelar', w: 1 }]); } }] };
-      case 4: return { type: 'btn', items: [{ t: '👤 Trocar de perfil', fn: function () { App.show(new ProfScreen()); } }] };
-      case 5: return { type: 'btn', items: [{ t: '🚪 Sair e trocar código', fn: function () { Modal.show('Trocar o código?', 'Você vai precisar digitar um código de acesso de novo.', [{ t: 'Sair', fn: function () { Session.clear(); DATA = null; App.show(new ActScreen()); } }, { t: 'Cancelar', w: 1 }]); } }] };
+      case 3: var bf = store.get('buf', 'alto'); return { type: 'choice', items: [['normal', 'Normal'], ['alto', 'Alto (recomendado)'], ['max', 'Máximo']].map(function (x) { return { t: x[1], s: bf === x[0], fn: function () { store.set('buf', x[0]); self.draw(); toast('Anti-travamento: ' + x[1]); } }; }) };
+      case 4: var ad = store.get('adult', false); return { type: 'choice', items: [{ t: 'Oculto', s: !ad, fn: function () { store.set('adult', false); refreshAll(); self.draw(); } }, { t: 'Visível', s: ad, fn: function () { Modal.show('Mostrar conteúdo adulto?', 'Categorias adultas vão aparecer em todos os perfis, menos no Kids.', [{ t: 'Mostrar', fn: function () { store.set('adult', true); refreshAll(); self.draw(); } }, { t: 'Cancelar', w: 1 }]); } }] };
+      case 5: return { type: 'btn', items: [{ t: 'Trocar de perfil', fn: function () { App.show(new ProfScreen()); } }] };
+      case 6: return { type: 'btn', items: [{ t: 'Sair e trocar código', fn: function () { Modal.show('Trocar o código?', 'Você vai precisar digitar um código de acesso de novo.', [{ t: 'Sair', fn: function () { Session.clear(); DATA = null; App.show(new ActScreen()); } }, { t: 'Cancelar', w: 1 }]); } }] };
     }
     return null;
   };
@@ -847,7 +903,7 @@
         '<div class="li"><div><small>SUA LISTA</small>' + cnt + '</div><span class="m">' + (upd ? 'Atualizada ' + fmtDate(upd.toISOString()) + ' ' + pad(upd.getHours()) + ':' + pad(upd.getMinutes()) : '') + '</span></div>' +
         '<div class="li"><div><small>VERSÃO</small>LumeaPlay ' + esc(CFG.version || '1.0') + '</div></div></div>';
     } else {
-      var desc = ['', 'Baixa a lista de novo do servidor, com os canais, filmes e séries mais recentes.', 'Como o vídeo ocupa a tela da sua TV.', 'Esconde ou mostra as categorias adultas da lista.', 'Perfil atual: ' + esc(Prof.cur().name) + '. Cada perfil tem seus favoritos e o seu "continuar assistindo".', 'Sai desta conta neste aparelho. O código continua válido.'][this.o];
+      var desc = ['', 'Baixa a lista de novo do servidor, com os canais, filmes e séries mais recentes.', 'Como o vídeo ocupa a tela da sua TV.', 'Guarda mais segundos de vídeo antes de tocar e reconecta sozinho quando o sinal cai. Use Máximo em internet instável.', 'Esconde ou mostra as categorias adultas da lista.', 'Perfil atual: ' + esc(Prof.cur().name) + '. Cada perfil tem seus favoritos e o seu "continuar assistindo".', 'Sai desta conta neste aparelho. O código continua válido.'][this.o];
       body = '<div class="pan"><div class="li"><div><small>' + OPTS[this.o].toUpperCase() + '</small><span style="font-weight:500;color:#cfd6f2">' + desc + '</span></div></div>' +
         (ctl.type === 'choice' ? '<div class="choice">' + ctl.items.map(function (x, i) { return '<span class="' + (self.zone === 'ctl' && self.c === i ? 'on' : x.s ? 's' : '') + '">' + esc(x.t) + '</span>'; }).join('') + '</div>'
           : '<div class="btns">' + ctl.items.map(function (x, i) { return '<div class="btn w ' + (self.zone === 'ctl' && self.c === i ? 'on' : '') + '">' + x.t + '</div>'; }).join('') + '</div>') + '</div>';

@@ -62,6 +62,32 @@
     </LinearLayout>
 
     <TextView
+        android:id="@+id/net"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_margin="32dp"
+        android:background="@drawable/osd_bg"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:textColor="#E6E9F0"
+        android:textSize="15sp"
+        android:textStyle="bold"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/bufTxt"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:layout_marginTop="84dp"
+        android:textColor="#E6E9F0"
+        android:textSize="17sp"
+        android:visibility="gone" />
+
+    <TextView
         android:id="@+id/err"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
