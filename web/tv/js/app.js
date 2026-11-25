@@ -42,7 +42,15 @@
   /* ---------- toast / loading / modal ---------- */
   var toastT;
   function toast(msg) { var t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(function () { t.classList.remove('show'); }, 3200); }
-  function loading(msg) { var l = $('#loading'); if (msg) { $('#loadmsg').textContent = msg; l.classList.remove('hide'); } else l.classList.add('hide'); }
+  function loading(msg, sub, pct) {
+    var l = $('#loading');
+    if (!msg) { l.classList.add('hide'); return; }
+    $('#loadmsg').textContent = msg; $('#loadsub').textContent = sub || '';
+    var b = $('#loadbar'); l.classList.toggle('ind', pct == null); if (pct != null) b.style.width = Math.max(3, Math.min(100, pct)) + '%';
+    l.classList.remove('hide');
+  }
+  var LANG = store.get('lang', 'pt');
+  function setLang(l) { LANG = l; store.set('lang', l); try { window.LumeaI18n && LumeaI18n.apply(l); } catch (e) { } }
   var Modal = {
     open: false, i: 0, btns: [],
     show: function (title, text, btns) {
@@ -130,19 +138,36 @@
   function fetchList(url, refresh) {
     if (url === 'demo:') return Promise.resolve(demoM3U());
     var u = N ? '/proxy?cache=' + (refresh ? 0 : 1) + '&url=' + encodeURIComponent(url) : url;
-    return fetch(u).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); });
+    return fetch(u).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      if (!r.body || !r.body.getReader || !window.TextDecoder) return r.text();
+      var rd = r.body.getReader(), dec = new TextDecoder('utf-8'), parts = [], got = 0, tot = +r.headers.get('content-length') || 0, last = 0;
+      function pump() {
+        return rd.read().then(function (x) {
+          if (x.done) { parts.push(dec.decode()); return parts.join(''); }
+          got += x.value.length; parts.push(dec.decode(x.value, { stream: true }));
+          var now = Date.now();
+          if (now - last > 150) { last = now; loading('Baixando canais, filmes e séries…', (got / 1048576).toFixed(1).replace('.', ',') + ' MB baixados', tot ? 20 + got / tot * 55 : Math.min(72, 20 + got / 1048576 * 4)); }
+          return pump();
+        });
+      }
+      return pump();
+    });
   }
   function loadList(refresh) {
-    loading(refresh ? 'Atualizando sua lista…' : 'Carregando seus canais, filmes e séries…');
+    loading(refresh ? 'Atualizando sua lista…' : 'Conectando ao servidor…', '', 8);
     return fetchList(Session.get().m3u, refresh).then(function (txt) {
+      loading('Organizando canais, filmes e séries…', '', 82);
+      return new Promise(function (res) { setTimeout(function () { res(txt); }, 60); });
+    }).then(function (txt) {
       var p = M3U.parse(txt);
       if (!p.live.length && !p.movies.length && !p.series.length) throw new Error('vazia');
       DATA = p; DATA.byId = {};
       p.live.concat(p.movies, p.series).forEach(function (x) { DATA.byId[x.id] = x; });
       p.series.forEach(function (s) { s.seasonList.forEach(function (k) { s.seasons[k].forEach(function (e) { DATA.byId[e.id] = e; }); }); });
       store.set('updated', Date.now());
-      loading();
-      return DATA;
+      loading('Tudo pronto!', p.live.length + ' canais · ' + p.movies.length + ' filmes · ' + p.series.length + ' séries', 100);
+      return new Promise(function (res) { setTimeout(function () { loading(); res(DATA); }, 450); });
     }).catch(function (e) { loading(); throw e; });
   }
 
@@ -325,40 +350,37 @@
   };
 
   /* ===== Ativação ===== */
-  function ActScreen(msg) { this.code = ''; this.f = 4; this.msg = msg || ''; }
+  var ACT_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '⌫'];
+  function ActScreen(msg) { this.code = ''; this.f = 0; this.msg = msg || ''; }
   ActScreen.prototype.mount = function (r) {
-    var cols = [0, 1, 2, 3, 4].map(function (c) {
-      return '<div class="colp" style="transform:translateY(' + [-6, 4, -12, 2, -4][c] + 'rem)">' + [0, 1, 2, 3].map(function (k) { return '<div class="pp" style="background-image:' + art('a' + (c * 4 + k) + 'x') + '"></div>'; }).join('') + '</div>';
-    }).join('');
-    r.innerHTML = '<div class="screen"><div class="lg-wrap"><div class="lg-left"><div class="stack">' + cols + '</div><div class="lg-fade"></div>' +
-      '<div class="lg-copy"><div class="logo big"><b></b><span>Lumea<em>Play</em></span></div><h1>Tudo o que você ama<br><span>em um só lugar.</span></h1>' +
-      '<div class="feat"><div>' + IC.tv + '<b>Ao vivo</b><small>canais da TV</small></div><div>' + IC.film + '<b>Filmes</b><small>lançamentos</small></div><div>' + IC.ser + '<b>Séries</b><small>todas as temporadas</small></div></div></div></div>' +
-      '<div class="lg-right"><div class="lg-card"><span class="step">ATIVAÇÃO</span><h2>Digite seu código</h2><p class="sub" id="amsg"></p><div class="code9" id="acode"></div>' +
-      '<div class="kp" id="akp"></div><div class="enter" id="aent">Entrar →</div><div class="alt" id="am3u">🔗 Entrar com link M3U</div><div class="dev"><span>ID DO APARELHO</span><b>' + esc(deviceId()) + '</b></div></div></div></div></div>';
+    r.innerHTML = '<div class="screen act2">' +
+      '<div class="a2-top"><div class="logo"><b></b><span>Lumea<em>Play</em></span></div><div class="a2-dev"><span>ID do aparelho</span><b>' + esc(deviceId()) + '</b></div></div>' +
+      '<div class="a2-main"><span class="a2-kicker">Ativação</span><h1>Ative o LumeaPlay</h1><p class="a2-sub" id="amsg"></p>' +
+      '<div class="a2-code" id="acode"></div><div class="a2-keys" id="akp"></div><div class="a2-acts" id="aacts"></div></div>' +
+      '<div class="a2-steps"><div><b>1</b><span>Receba o código de 9 dígitos do seu revendedor</span></div><div><b>2</b><span>Digite pelo controle remoto ou pelo teclado da tela</span></div><div><b>3</b><span>Aperte Entrar e comece a assistir</span></div></div></div>';
     this.draw();
   };
   ActScreen.prototype.draw = function () {
-    var c = this.code, h = '';
+    var c = this.code, h = '', f = this.f;
     for (var g = 0; g < 3; g++) { h += '<div class="g">'; for (var k = 0; k < 3; k++) { var i = g * 3 + k; h += '<div class="d ' + (i < c.length ? 'fill ' : '') + (i === c.length ? 'cur' : '') + '">' + (c[i] || '') + '</div>'; } h += '</div>'; }
     $('#acode').innerHTML = h;
-    var keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '⌫', '0', '✓'], f = this.f;
-    $('#akp').innerHTML = keys.map(function (k, i) { return '<div class="' + (i === f ? 'on ' : '') + (k === '⌫' ? 'del' : k === '✓' ? 'okk' : '') + '">' + k + '</div>'; }).join('');
-    $('#aent').classList.toggle('on', f === 12); $('#am3u').classList.toggle('on', f === 13);
-    var m = $('#amsg'); m.textContent = this.msg || 'São 9 números que você recebeu do seu revendedor.'; m.classList.toggle('err', !!this.msg);
+    $('#akp').innerHTML = ACT_KEYS.map(function (k, i) { return '<div class="' + (i === f ? 'on' : '') + (k === '⌫' ? ' del' : '') + '">' + k + '</div>'; }).join('');
+    $('#aacts').innerHTML = '<div class="a2-btn pri ' + (f === 11 ? 'on' : '') + '">Entrar</div><div class="a2-btn ' + (f === 12 ? 'on' : '') + '">Usar link M3U</div>';
+    var m = $('#amsg'); m.textContent = this.msg || 'Digite o código de 9 dígitos enviado pelo seu revendedor.'; m.classList.toggle('err', !!this.msg);
   };
-  ActScreen.prototype.type = function (d) { if (this.code.length < 9) { this.code += d; this.msg = ''; this.draw(); if (this.code.length === 9) { this.f = 12; this.draw(); } } };
+  ActScreen.prototype.type = function (d) { if (this.code.length < 9) { this.code += d; this.msg = ''; if (this.code.length === 9) this.f = 11; this.draw(); } };
   ActScreen.prototype.key = function (k) {
     if (/^d\d$/.test(k)) { this.type(k[1]); return true; }
     var f = this.f;
-    if (k === 'left' && f < 12 && f % 3 > 0) this.f--;
-    else if (k === 'right' && f < 12 && f % 3 < 2) this.f++;
-    else if (k === 'up') { if (f === 13) this.f = 12; else if (f === 12) this.f = 10; else if (f >= 3) this.f -= 3; }
-    else if (k === 'down') { if (f < 9) this.f += 3; else if (f < 12) this.f = 12; else if (f === 12) this.f = 13; }
+    if (k === 'left') { if (f > 0 && f <= 10) this.f--; else if (f === 12) this.f = 11; }
+    else if (k === 'right') { if (f < 10) this.f++; else if (f === 11) this.f = 12; }
+    else if (k === 'down') { if (f <= 10) this.f = f < 6 ? 11 : 12; }
+    else if (k === 'up') { if (f >= 11) this.f = f === 11 ? 4 : 7; }
     else if (k === 'ok') {
-      if (f === 13) { App.push(new M3UScreen()); return true; }
-      if (f === 9) { this.code = this.code.slice(0, -1); this.msg = ''; }
-      else if (f === 11 || f === 12) { this.submit(); return true; }
-      else this.type(['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0'][f]);
+      if (f === 12) { App.push(new M3UScreen()); return true; }
+      if (f === 11) { this.submit(); return true; }
+      if (f === 10) { this.code = this.code.slice(0, -1); this.msg = ''; }
+      else this.type(ACT_KEYS[f]);
     } else if (k === 'back') { if (this.code) { this.code = this.code.slice(0, -1); this.draw(); return true; } return false; }
     else return false;
     this.draw(); return true;
@@ -380,6 +402,103 @@
     }).catch(function () { loading(); self.msg = 'Sem conexão com a internet. Verifique e tente de novo.'; self.shake(); });
   };
   ActScreen.prototype.shake = function () { this.draw(); var c = $('#acode'); c.classList.remove('shake'); void c.offsetWidth; c.classList.add('shake'); };
+
+  /* ===== Criar perfil ===== */
+  var PK = [];
+  (function () {
+    ['ABCDEFGHIJ', 'KLMNOPQRST', 'UVWXYZÇÃÉ-'].forEach(function (r, ri) { r.split('').forEach(function (c, ci) { PK.push({ t: c, v: c, r: ri, c0: ci, c1: ci }); }); });
+    [['Espaço', ' ', 0, 3], ['Apagar', 'del', 4, 6], ['Limpar', 'clear', 7, 9]].forEach(function (x) { PK.push({ t: x[0], v: x[1], r: 3, c0: x[2], c1: x[3] }); });
+    PK.push({ t: 'kids', v: 'kids', r: 4, c0: 0, c1: 4 });
+    PK.push({ t: 'Continuar', v: 'go', r: 4, c0: 5, c1: 9 });
+  })();
+  function gridMove(keys, i, k) {
+    var cur = keys[i];
+    function row(r) { return keys.filter(function (x) { return x.r === r; }); }
+    if (k === 'left' || k === 'right') { var rr = row(cur.r), j = rr.indexOf(cur) + (k === 'left' ? -1 : 1); return j >= 0 && j < rr.length ? keys.indexOf(rr[j]) : i; }
+    var tr = cur.r + (k === 'up' ? -1 : 1), col = Math.round((cur.c0 + cur.c1) / 2);
+    var t = row(tr).filter(function (x) { return x.c0 <= col && x.c1 >= col; })[0] || row(tr)[0];
+    return t ? keys.indexOf(t) : -1;
+  }
+  function NewProfileScreen(first) { this.first = first; this.name = ''; this.av = Prof.list().length % AVS.length; this.kids = false; this.z = 'av'; this.k = 0; this.msg = ''; }
+  NewProfileScreen.prototype.mount = function (r) {
+    r.innerHTML = '<div class="screen setup"><div class="su-top"><div class="logo"><b></b><span>Lumea<em>Play</em></span></div>' + (this.first ? '<span class="su-step">Passo 1 de 2</span>' : '') + '</div>' +
+      '<div class="su-card np"><div class="np-l"><div class="np-av" id="npav"></div><div class="np-name" id="npname"></div><div class="np-tag" id="nptag"></div></div>' +
+      '<div class="np-r"><h1>' + (this.first ? 'Crie seu perfil' : 'Novo perfil') + '</h1><p class="su-sub" id="npmsg"></p><div class="np-avs" id="npavs"></div><div class="np-field" id="npfield"></div><div class="mkb np-kb" id="npkb"></div></div></div></div>';
+    this.draw();
+  };
+  NewProfileScreen.prototype.draw = function () {
+    var self = this, av = this.av;
+    $('#npav').style.background = AVBG[av]; $('#npav').textContent = AVS[av];
+    $('#npname').textContent = this.name || 'Seu nome';
+    $('#nptag').textContent = this.kids ? 'Perfil infantil' : 'Perfil padrão';
+    $('#npavs').innerHTML = AVS.map(function (a, i) { return '<div class="' + (i === av ? 'cur ' : '') + (self.z === 'av' && self.k === i ? 'on' : '') + '" style="background:' + AVBG[i] + '">' + a + '</div>'; }).join('');
+    $('#npfield').innerHTML = (this.name ? esc(this.name) : '<em>Digite o nome do perfil</em>') + '<i class="cur"></i>';
+    $('#npkb').innerHTML = PK.map(function (x, i) {
+      var t = x.v === 'kids' ? 'Infantil: ' + (self.kids ? 'Sim' : 'Não') : x.t;
+      return '<div style="grid-row:' + (x.r + 1) + ';grid-column:' + (x.c0 + 1) + '/' + (x.c1 + 2) + '" class="' + (self.z === 'kb' && i === self.k ? 'on ' : '') + (x.v === 'go' ? 'go ' : '') + (x.t.length > 1 ? 'sp' : '') + '">' + esc(t) + '</div>';
+    }).join('');
+    var m = $('#npmsg'); m.textContent = this.msg || 'Escolha um avatar e digite o seu nome.'; m.classList.toggle('err', !!this.msg);
+  };
+  NewProfileScreen.prototype.typeChar = function (t) { if (/^[\wÀ-ú \-]$/i.test(t) && this.name.length < 16) { this.name = (this.name + t).replace(/^\s+/, ''); if (this.name.length === 1) this.name = this.name.toUpperCase(); this.msg = ''; this.draw(); } };
+  NewProfileScreen.prototype.save = function () {
+    var nm = this.name.trim();
+    if (!nm) { this.msg = 'Digite um nome para o perfil.'; this.draw(); return; }
+    var p = { id: 'p' + Date.now().toString(36), name: nm, av: this.av, kids: this.kids };
+    if (this.first) { store.set('profiles', [p]); Prof.use(p); App.show(new LangScreen(true)); }
+    else { var l = Prof.list(); l.push(p); store.set('profiles', l); toast('Perfil "' + nm + '" criado'); App.pop(); }
+  };
+  NewProfileScreen.prototype.key = function (k) {
+    if (/^d\d$/.test(k)) return true;
+    if (this.z === 'av') {
+      if (k === 'left' && this.k > 0) this.av = --this.k;
+      else if (k === 'right' && this.k < AVS.length - 1) this.av = ++this.k;
+      else if (k === 'ok') this.av = this.k;
+      else if (k === 'down') { this.av = this.k; this.z = 'kb'; this.k = 0; }
+      else return k !== 'back';
+      this.draw(); return true;
+    }
+    if (k === 'up' || k === 'down' || k === 'left' || k === 'right') {
+      var j = gridMove(PK, this.k, k);
+      if (j < 0) { if (k === 'up') { this.z = 'av'; this.k = this.av; } } else this.k = j;
+    } else if (k === 'ok') {
+      var v = PK[this.k].v;
+      if (v === 'go') { this.save(); return true; }
+      if (v === 'kids') this.kids = !this.kids;
+      else if (v === 'del') this.name = this.name.slice(0, -1);
+      else if (v === 'clear') this.name = '';
+      else { this.typeChar(v === ' ' ? ' ' : (this.name ? v.toLowerCase() : v)); return true; }
+    } else if (k === 'back') { if (this.name) { this.name = this.name.slice(0, -1); } else return false; }
+    else return false;
+    this.draw(); return true;
+  };
+
+  /* ===== Idioma ===== */
+  function LangScreen(first) { this.first = first; this.sel = store.get('lang', 'pt') === 'en' ? 1 : 0; this.f = this.sel; }
+  LangScreen.prototype.mount = function (r) { this.r = r; this.draw(); };
+  LangScreen.prototype.draw = function () {
+    var self = this;
+    var opts = [['pt', 'Português', 'Brasil', 'BR'], ['en', 'English', 'United States', 'US']];
+    this.r.innerHTML = '<div class="screen setup"><div class="su-top"><div class="logo"><b></b><span>Lumea<em>Play</em></span></div>' + (this.first ? '<span class="su-step">Passo 2 de 2</span>' : '') + '</div>' +
+      '<div class="su-card lang"><h1>Escolha o idioma</h1><p class="su-sub">Selecione uma opção e confirme.</p><div class="lg-opts">' +
+      opts.map(function (o, i) { return '<div class="lg-opt ' + (i === self.sel ? 'sel ' : '') + (i === self.f ? 'on' : '') + '"><span class="cc">' + o[3] + '</span><b>' + o[1] + '</b><small>' + o[2] + '</small><i class="ck">' + (i === self.sel ? '✓' : '') + '</i></div>'; }).join('') +
+      '</div><div class="a2-btn pri wide ' + (this.f === 2 ? 'on' : '') + '">Confirmar</div></div></div>';
+  };
+  LangScreen.prototype.key = function (k) {
+    if (k === 'left' && this.f === 1) this.f = 0;
+    else if (k === 'right' && this.f === 0) this.f = 1;
+    else if (k === 'down' && this.f < 2) this.f = 2;
+    else if (k === 'up' && this.f === 2) this.f = this.sel;
+    else if (k === 'ok') {
+      if (this.f < 2) { this.sel = this.f; this.f = 2; }
+      else {
+        setLang(this.sel === 1 ? 'en' : 'pt');
+        if (this.first) { store.set('setup', 1); App.show(new HomeScreen(0)); } else { App.pop(); toast(LANG === 'en' ? 'Language updated' : 'Idioma atualizado'); }
+        return true;
+      }
+    } else return k !== 'back';
+    this.draw(); return true;
+  };
+
 
   /* ===== Entrar com link M3U ===== */
   var MK = [];
@@ -461,10 +580,7 @@
         Modal.show('Apagar o perfil ' + p.name + '?', 'Favoritos e histórico deste perfil serão apagados.', [{ t: 'Apagar', fn: function () { store.set('profiles', l.filter(function (x) { return x.id !== p.id; })); if (store.get('curProfile') === p.id) store.set('curProfile', Prof.list()[0].id); self.f = 0; self.draw(); } }, { t: 'Cancelar', w: 1 }]);
         return true;
       } else if (this.f === l.length) {
-        var names = ['Família', 'Kids', 'Perfil 4', 'Perfil 5'], used = l.map(function (x) { return x.name; });
-        var nm = names.filter(function (x) { return used.indexOf(x) < 0; })[0] || ('Perfil ' + (l.length + 1));
-        l.push({ id: 'p' + Date.now().toString(36), name: nm, av: l.length % AVS.length, kids: nm === 'Kids' });
-        store.set('profiles', l); toast('Perfil "' + nm + '" criado' + (nm === 'Kids' ? ' — mostra só conteúdo infantil' : ''));
+        App.push(new NewProfileScreen(false)); return true;
       } else { Prof.use(l[this.f]); App.show(new HomeScreen()); return true; }
     } else if (k === 'back') { if (this.edit) { this.edit = false; this.f = 0; } else return false; }
     else return false;
@@ -874,7 +990,7 @@
   SeriesScreen.prototype.notify = function (w) { if (w === 'progress') this.mount(App.root()); };
 
   /* ===== Configurações ===== */
-  var OPTS = ['Minha conta', 'Atualizar lista', 'Formato da tela', 'Anti-travamento', 'Conteúdo adulto', 'Perfis', 'Trocar código'];
+  var OPTS = ['Minha conta', 'Atualizar lista', 'Formato da tela', 'Anti-travamento', 'Conteúdo adulto', 'Perfis', 'Idioma', 'Trocar código'];
   function SettingsTab() { this.o = 0; this.zone = 'opts'; this.c = 0; }
   SettingsTab.prototype.mount = function (el) { this.el = el; this.draw(); };
   SettingsTab.prototype.focus = function (on) { this.focused = on; if (!on) this.zone = 'opts'; this.draw(); };
@@ -886,7 +1002,8 @@
       case 3: var bf = store.get('buf', 'alto'); return { type: 'choice', items: [['normal', 'Normal'], ['alto', 'Alto (recomendado)'], ['max', 'Máximo']].map(function (x) { return { t: x[1], s: bf === x[0], fn: function () { store.set('buf', x[0]); self.draw(); toast('Anti-travamento: ' + x[1]); } }; }) };
       case 4: var ad = store.get('adult', false); return { type: 'choice', items: [{ t: 'Oculto', s: !ad, fn: function () { store.set('adult', false); refreshAll(); self.draw(); } }, { t: 'Visível', s: ad, fn: function () { Modal.show('Mostrar conteúdo adulto?', 'Categorias adultas vão aparecer em todos os perfis, menos no Kids.', [{ t: 'Mostrar', fn: function () { store.set('adult', true); refreshAll(); self.draw(); } }, { t: 'Cancelar', w: 1 }]); } }] };
       case 5: return { type: 'btn', items: [{ t: 'Trocar de perfil', fn: function () { App.show(new ProfScreen()); } }] };
-      case 6: return { type: 'btn', items: [{ t: 'Sair e trocar código', fn: function () { Modal.show('Trocar o código?', 'Você vai precisar digitar um código de acesso de novo.', [{ t: 'Sair', fn: function () { Session.clear(); DATA = null; App.show(new ActScreen()); } }, { t: 'Cancelar', w: 1 }]); } }] };
+      case 6: return { type: 'btn', items: [{ t: 'Mudar idioma', fn: function () { App.push(new LangScreen(false)); } }] };
+      case 7: return { type: 'btn', items: [{ t: 'Sair e trocar código', fn: function () { Modal.show('Trocar o código?', 'Você vai precisar digitar um código de acesso de novo.', [{ t: 'Sair', fn: function () { Session.clear(); DATA = null; App.show(new ActScreen()); } }, { t: 'Cancelar', w: 1 }]); } }] };
     }
     return null;
   };
@@ -903,7 +1020,7 @@
         '<div class="li"><div><small>SUA LISTA</small>' + cnt + '</div><span class="m">' + (upd ? 'Atualizada ' + fmtDate(upd.toISOString()) + ' ' + pad(upd.getHours()) + ':' + pad(upd.getMinutes()) : '') + '</span></div>' +
         '<div class="li"><div><small>VERSÃO</small>LumeaPlay ' + esc(CFG.version || '1.0') + '</div></div></div>';
     } else {
-      var desc = ['', 'Baixa a lista de novo do servidor, com os canais, filmes e séries mais recentes.', 'Como o vídeo ocupa a tela da sua TV.', 'Guarda mais segundos de vídeo antes de tocar e reconecta sozinho quando o sinal cai. Use Máximo em internet instável.', 'Esconde ou mostra as categorias adultas da lista.', 'Perfil atual: ' + esc(Prof.cur().name) + '. Cada perfil tem seus favoritos e o seu "continuar assistindo".', 'Sai desta conta neste aparelho. O código continua válido.'][this.o];
+      var desc = ['', 'Baixa a lista de novo do servidor, com os canais, filmes e séries mais recentes.', 'Como o vídeo ocupa a tela da sua TV.', 'Guarda mais segundos de vídeo antes de tocar e reconecta sozinho quando o sinal cai. Use Máximo em internet instável.', 'Esconde ou mostra as categorias adultas da lista.', 'Perfil atual: ' + esc(Prof.cur().name) + '. Cada perfil tem seus favoritos e o seu "continuar assistindo".', 'Escolha o idioma do aplicativo.', 'Sai desta conta neste aparelho. O código continua válido.'][this.o];
       body = '<div class="pan"><div class="li"><div><small>' + OPTS[this.o].toUpperCase() + '</small><span style="font-weight:500;color:#cfd6f2">' + desc + '</span></div></div>' +
         (ctl.type === 'choice' ? '<div class="choice">' + ctl.items.map(function (x, i) { return '<span class="' + (self.zone === 'ctl' && self.c === i ? 'on' : x.s ? 's' : '') + '">' + esc(x.t) + '</span>'; }).join('') + '</div>'
           : '<div class="btns">' + ctl.items.map(function (x, i) { return '<div class="btn w ' + (self.zone === 'ctl' && self.c === i ? 'on' : '') + '">' + x.t + '</div>'; }).join('') + '</div>') + '</div>';
@@ -978,14 +1095,17 @@
 
   /* ---------- fluxo principal ---------- */
   var WD = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'], MO = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
-  function tick() { var c = $('#clock'); if (c) { var d = new Date(); c.textContent = WD[d.getDay()] + ', ' + d.getDate() + ' ' + MO[d.getMonth()] + ' • ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); } }
+  function tick() { var c = $('#clock'); if (c) { var d = new Date(); c.textContent = (LANG === 'en' ? ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()] + ', ' + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()] + ' ' + d.getDate() : WD[d.getDay()] + ', ' + d.getDate() + ' ' + MO[d.getMonth()]) + ' • ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); } }
   setInterval(tick, 15000);
   function refreshAll() { var h = App.stack[0]; if (h instanceof HomeScreen) { var keep = h.tabs[h.tab]; h.tabs = {}; h.tabs[h.tab] = keep; } }
   function reloadList() {
     loadList(true).then(function () { toast('Lista atualizada!'); App.show(new HomeScreen(3)); })
       .catch(function () { toast('Não foi possível atualizar a lista agora. Tente mais tarde.'); });
   }
-  function goHome() { var l = Prof.list(); if (l.length > 1) App.show(new ProfScreen()); else { Prof.use(l[0]); App.show(new HomeScreen()); } }
+  function goHome() {
+    if (!store.get('setup')) { if (store.get('profiles', null)) store.set('setup', 1); else { App.show(new NewProfileScreen(true)); return; } }
+    var l = Prof.list(); if (l.length > 1) App.show(new ProfScreen()); else { Prof.use(l[0]); App.show(new HomeScreen()); }
+  }
   function startMain() {
     loadList(false).then(goHome).catch(function (e) {
       App.show(new ActScreen('Não conseguimos carregar sua lista (' + (e.message || 'erro') + '). Fale com seu revendedor.'));
@@ -1040,5 +1160,6 @@
     onResume: function () { tick(); }
   };
 
+  setLang(LANG);
   boot();
 })();
