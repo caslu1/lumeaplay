@@ -218,7 +218,10 @@
     if (it.type === 'live') addRecent(it.id);
     if (it.type === 'ep') { var last = Prof.get('lastEp', {}); last[it.series] = it.id; Prof.set('lastEp', last); }
     PlayCtx = { item: it, list: list };
-    var payload = { url: it.url, title: titleFor(it), sub: it.group || '', id: it.id, type: it.type === 'live' ? 'live' : 'vod', start: Math.floor((opts.start || 0) * 1000), index: idx, resize: store.get('resize', 'fit'), buf: store.get('buf', 'alto'), q: store.get('vq', 'auto') };
+    var payload = { url: it.url, title: titleFor(it), sub: it.group || '', id: it.id, type: it.type === 'live' ? 'live' : 'vod', start: Math.floor((opts.start || 0) * 1000), index: idx, resize: store.get('resize', 'fit'), buf: store.get('buf', 'alto'), q: store.get('vq', 'auto'),
+      kind: it.type === 'live' ? 'live' : it.type === 'ep' ? 'ep' : String(it.id).indexOf('pb:') === 0 ? 'pb' : 'movie', logo: it.logo || '', lang: LANG };
+    if (it.type === 'ep' && it.title) payload.sub = it.title + (it.group ? ' · ' + it.group : '');
+    if (it.type === 'live') { var ep = EPG.get(it); if (ep && ep.list.length) payload.epg = ep.list.slice(0, 4).map(function (x) { return { t: x.t, s: x.s, e: x.e }; }); }
     if (N && N.play) {
       try { N.setPlaylist(JSON.stringify(list.map(function (x) { return { u: x.url, n: x.name, l: x.logo || '', id: x.id, num: x.num || 0 }; }))); } catch (e) { }
       N.play(JSON.stringify(payload));
@@ -237,13 +240,64 @@
      - outros formatos, ou se o hls.js não existir / falhar: <video> nativo da TV
      - tecla vermelha / Menu / Info troca a qualidade (Auto → maior → … → menor) */
   var FIT = { fit: 'contain', fill: 'cover', zoom: 'fill' };
+  var PIC = {
+    play: '<svg viewBox="0 0 24 24"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.2-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></svg>',
+    pause: '<svg viewBox="0 0 24 24"><rect x="6" y="5" width="4.2" height="14" rx="1"/><rect x="13.8" y="5" width="4.2" height="14" rx="1"/></svg>',
+    rew: '<svg viewBox="0 0 24 24"><path d="M11 6.5v11a.8.8 0 0 1-1.25.66L2.6 13.1a1.3 1.3 0 0 1 0-2.2l7.15-5.06A.8.8 0 0 1 11 6.5zm10 0v11a.8.8 0 0 1-1.25.66L12.6 13.1a1.3 1.3 0 0 1 0-2.2l7.15-5.06A.8.8 0 0 1 21 6.5z"/></svg>',
+    fwd: '<svg viewBox="0 0 24 24"><path d="M3 6.5v11a.8.8 0 0 0 1.25.66l7.15-5.06a1.3 1.3 0 0 0 0-2.2L4.25 5.84A.8.8 0 0 0 3 6.5zm10 0v11a.8.8 0 0 0 1.25.66l7.15-5.06a1.3 1.3 0 0 0 0-2.2l-7.15-5.06A.8.8 0 0 0 13 6.5z"/></svg>'
+  };
   var WebPlayer;
   WebPlayer = {
     isOpen: false, list: [], idx: 0, p: null, hideT: null, hls: null, url: '', title: '', q: -1, fails: 0,
     open: function (p, list) {
       this.p = p; this.list = list || []; this.idx = p.index || 0; this.isOpen = true;
       var v = $('#wv'); v.style.objectFit = FIT[p.resize] || 'contain';
+      var live = p.type === 'live', en = LANG === 'en';
+      $('#wkind').textContent = { live: en ? '● LIVE' : '● AO VIVO', ep: en ? 'SERIES' : 'SÉRIE', pb: '● PLAYBACK', movie: en ? 'MOVIE' : 'FILME' }[p.kind] || (live ? '● AO VIVO' : 'FILME');
+      $('#wkind').className = 'bd' + (live ? ' live' : '');
+      $('#wlive').classList.toggle('hide', !live); $('#wvod').classList.toggle('hide', live);
+      $('#whint').innerHTML = live
+        ? '<span><b>▲▼</b>Trocar canal</span><span><b>OK</b>Informações</span><span><b class="red"></b>Qualidade</span><span><b>Voltar</b>Sair</span>'
+        : '<span><b>◀ ▶</b>Voltar / avançar 10 s</span><span><b>OK</b>Pausar / continuar</span><span><b class="red"></b>Qualidade</span><span><b>Voltar</b>Sair</span>';
+      $('#wrw').innerHTML = PIC.rew; $('#wff').innerHTML = PIC.fwd;
       $('#wp').classList.remove('hide'); this.load(p.url, p.title, p.start / 1000);
+    },
+    /* dados fixos do painel: canal (ao vivo) ou título */
+    chrome: function () {
+      var p = this.p, it = p.type === 'live' ? this.list[this.idx] : null;
+      if (it) {
+        var q = quality(it.name);
+        $('#wt').textContent = cname(it.name); $('#ws').textContent = it.group || '';
+        $('#wname').textContent = cname(it.name); $('#wnum').textContent = it.num || '';
+        $('#wqual').textContent = q; $('#wqual').classList.toggle('hide', !q);
+        $('#wlogo').innerHTML = '<span>' + esc(initials(cname(it.name))) + '</span>' + img(it.logo);
+        EPG.want(it, true);
+      } else {
+        $('#wt').textContent = p.title; $('#ws').textContent = p.sub || ''; $('#wqual').classList.add('hide');
+      }
+      this.paint();
+    },
+    /* partes que mudam: relógio, guia, tempo, pausa */
+    paint: function () {
+      var v = $('#wv'), p = this.p; if (!p) return;
+      var d = new Date(); $('#wclk').textContent = pad(d.getHours()) + ':' + pad(d.getMinutes());
+      if (p.type === 'live') {
+        var it = this.list[this.idx], e = it && EPG.get(it), l = e ? e.list : [], now = Date.now(), cur = null, nx = null, en = LANG === 'en';
+        for (var i = 0; i < l.length; i++) { if (l[i].s <= now && l[i].e > now) cur = l[i]; else if (l[i].s > now && !nx) nx = l[i]; }
+        $('#wnow').innerHTML = cur ? '<b>' + (en ? 'Now' : 'Agora') + '</b>' + esc(cur.t) + '<em>' + hm(cur.s) + ' – ' + hm(cur.e) + '</em>' : esc(it ? it.group || '' : '');
+        $('#wnb').style.width = cur ? pct(cur) + '%' : '0'; $('#wnb').parentNode.classList.toggle('hide', !cur);
+        $('#wnext').innerHTML = nx ? '<b>' + (en ? 'Next' : 'A seguir') + '</b>' + esc(nx.t) + ' · ' + hm(nx.s) : '';
+        if (cur) $('#ws').textContent = cur.t + ' · ' + (it.group || '');
+      } else {
+        var dur = isFinite(v.duration) ? v.duration : 0, pos = v.currentTime || 0, bf = 0;
+        try { if (v.buffered.length) bf = v.buffered.end(v.buffered.length - 1); } catch (x) { }
+        $('#wb').style.width = (dur ? pos / dur * 100 : 0) + '%'; $('#wbuf').style.width = (dur ? Math.min(100, bf / dur * 100) : 0) + '%';
+        $('#wkn').style.left = (dur ? pos / dur * 100 : 0) + '%';
+        $('#wc').textContent = fmtTime(pos); $('#wd').textContent = dur ? '-' + fmtTime(dur - pos) + '  /  ' + fmtTime(dur) : '';
+        $('#wpp').innerHTML = v.paused ? PIC.play : PIC.pause;
+        $('#wbig').classList.toggle('hide', !v.paused || !v.currentSrc);
+        if (v.paused) this.osd(true);
+      }
     },
     hlsCfg: function (live) {
       return {
@@ -259,12 +313,12 @@
     native: function (v, url) { this.stopHls(); v.src = url; var pr = v.play(); if (pr && pr.catch) pr.catch(function () { }); },
     load: function (url, title, start) {
       var self = this, v = $('#wv'); this.url = url; this.title = title; this.q = -1; this.fails = 0;
-      $('#wt').textContent = title; $('#wq').textContent = '';
+      $('#wq').textContent = ''; this.chrome();
       this.stopHls(); v.removeAttribute('src');
       v.onloadedmetadata = function () { if (start) v.currentTime = start; self.info(); };
       v.onresize = function () { self.info(); };
       v.onerror = function () { if (!self.hls) toast('Não foi possível reproduzir este conteúdo.'); };
-      v.ontimeupdate = function () { if (v.duration && isFinite(v.duration)) { $('#wb').style.width = (v.currentTime / v.duration * 100) + '%'; $('#wc').textContent = fmtTime(v.currentTime); $('#wd').textContent = fmtTime(v.duration); } };
+      v.ontimeupdate = function () { self.paint(); }; v.onpause = v.onplay = function () { self.paint(); };
       var H = window.Hls, useHls = false;
       try { useHls = !!(H && H.isSupported() && /\.m3u8(\?|$)/i.test(url)); } catch (e) { }
       if (useHls) {
@@ -310,16 +364,22 @@
       toast(this.q < 0 ? 'Qualidade: Automática' : 'Qualidade: ' + (lv.height ? lv.height + 'p' : Math.round(lv.bitrate / 1000) + ' kbps'));
       this.info();
     },
-    osd: function () { var o = $('#wp .ov'); this.info(); o.style.opacity = 1; clearTimeout(this.hideT); this.hideT = setTimeout(function () { o.style.opacity = 0; }, 4000); },
+    osd: function (stay) {
+      var o = $('#wp .ov'), v = $('#wv'); this.info(); o.classList.add('show'); clearTimeout(this.hideT);
+      if (!stay) this.hideT = setTimeout(function () { if (!(v.paused && WebPlayer.p && WebPlayer.p.type !== 'live')) o.classList.remove('show'); }, 5000);
+    },
     close: function () {
       var v = $('#wv'); var r = { id: this.p.id, type: this.p.type, pos: (v.currentTime || 0) * 1000, dur: (isFinite(v.duration) ? v.duration : 0) * 1000, index: this.idx };
       this.stopHls(); v.pause(); v.removeAttribute('src'); try { v.load(); } catch (e) { }
       this.isOpen = false; $('#wp').classList.add('hide'); onPlayerResult(r);
     },
     key: function (k) {
-      var v = $('#wv'); this.osd();
+      var v = $('#wv'), o = $('#wp .ov'), live = this.p.type === 'live';
+      if (live && k === 'ok' && o.classList.contains('show')) { o.classList.remove('show'); return true; }
+      this.osd();
       if (k === 'back') this.close();
       else if (k === 'opt') this.cycleQuality();
+      else if (live && (k === 'ok' || k === 'left' || k === 'right')) { }
       else if (k === 'ok') { if (v.paused) { var pr = v.play(); if (pr && pr.catch) pr.catch(function () { }); } else v.pause(); }
       else if (k === 'left' && this.p.type === 'vod') v.currentTime = Math.max(0, v.currentTime - 10);
       else if (k === 'right' && this.p.type === 'vod') v.currentTime = v.currentTime + 10;
@@ -327,6 +387,7 @@
         this.idx = (this.idx + (k === 'up' || k === 'chup' ? -1 : 1) + this.list.length) % this.list.length;
         var it = this.list[this.idx]; addRecent(it.id); this.load(it.url, it.name, 0);
       }
+      this.paint();
       return true;
     }
   };
