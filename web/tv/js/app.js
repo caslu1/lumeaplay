@@ -1163,39 +1163,55 @@
     M3U.groups(items).forEach(function (g) { rows.push({ title: g.name, items: g.items }); });
     return rows;
   };
+  /* Filmes e Séries: destaque do título em foco no topo + fileiras de pôsteres maiores, com nome embaixo */
+  function vcard(it, o) {
+    o = o || {};
+    var pr = progress()[it.id], pg = pr && pr.d ? Math.min(100, pr.p / pr.d * 100) : 0;
+    if (it.type === 'series') { var le = DATA.byId[Prof.get('lastEp', {})[it.id]], lp = le && progress()[le.id]; pg = lp && lp.d ? Math.min(100, lp.p / lp.d * 100) : 0; }
+    return '<div class="vc"><div class="vp' + (it.logo ? ' img' : '') + '" style="background-image:' + art(it.id) + '"><span class="vt">' + esc(it.title || it.name) + '</span>' + pimg(it.logo) +
+      (o.rank ? '<em class="vr">' + o.rank + '</em>' : '') + (o.nw ? '<em class="vnw">' + (LANG === 'en' ? 'NEW' : 'NOVO') + '</em>' : '') +
+      (pg > 2 && pg < 97 ? '<div class="vpg"><i style="width:' + pg + '%"></i></div>' : '') + '</div><div class="vn">' + esc(it.title || it.name) + '</div></div>';
+  }
+  function vheroHTML(it) {
+    var pr = progress()[it.id], line = '', ser = it.type === 'series', y = it.year ? '<i>•</i><span>' + it.year + '</span>' : '';
+    if (!ser && pr && pr.d && pr.p > 30 && pr.p / pr.d < .95) line = 'Você parou em ' + fmtTime(pr.p) + ' de ' + fmtTime(pr.d) + '.';
+    else if (ser) { var le = DATA.byId[Prof.get('lastEp', {})[it.id]]; if (le) line = 'Último assistido: temporada ' + le.s + ', episódio ' + le.e + '.'; }
+    var meta = ser ? '<i>•</i><span>' + it.seasonList.length + (it.seasonList.length > 1 ? ' temporadas' : ' temporada') + '</span><i>•</i><span>' + it.count + ' episódios</span>' : y;
+    var q = quality(it.name);
+    return '<div class="vk"><span class="bd">' + (ser ? 'SÉRIE' : 'FILME') + '</span>' + (q ? '<span class="bd q2">' + q + '</span>' : '') + (isFav(it.id) ? '<span class="bd fav">★ Minha lista</span>' : '') + '</div>' +
+      '<h1>' + esc(it.title || it.name) + '</h1><div class="vm"><span>' + esc(it.group) + '</span>' + meta + '</div>' +
+      (line ? '<p class="vl2">' + esc(line) + '</p>' : '') +
+      '<div class="vhint"><span><b>OK</b>Detalhes</span><span><b>◀ ▶</b>Navegar</span><span><b>▲ ▼</b>Categorias</span></div>';
+  }
   VodTab.prototype.mount = function (el) {
     this.R = this.rows(); if (this.r >= this.R.length) this.r = 0;
     if (!this.R.length) { el.innerHTML = '<div class="vod-empty">Sua lista não tem ' + (this.kind === 'movies' ? 'filmes' : 'séries') + (Prof.kids() ? ' infantis' : '') + '.</div>'; return; }
-    el.innerHTML = '<div class="hero"><div class="bgb" id="hbb"></div><div class="bg" id="hbg"></div></div><div class="hc" id="hc"></div><div id="htag"></div><div class="rows" id="rows"></div><div class="rmark" id="rmark"></div>';
+    el.innerHTML = '<div class="vt-bgw"><div class="vt-amb" id="vamb"></div></div><div class="vt-shade"></div><div class="vt-hero" id="hc"></div><div class="vt-rows" id="rows"></div>';
     this.drawRows();
   };
   VodTab.prototype.drawRows = function () {
     var box = $('#rows'); if (!box) return;
-    var rowH = 22 * remPx(); box.innerHTML = ''; this.strips = {};
+    var rowH = 27.6 * remPx(); box.innerHTML = ''; this.strips = {};
     for (var i = Math.max(0, this.r - 1); i < Math.min(this.R.length, this.r + 3); i++) {
       var row = this.R[i], d = document.createElement('div');
-      d.className = 'row' + (i === this.r ? ' act' : ''); d.style.top = ((i - this.r) * rowH) + 'px';
-      d.innerHTML = '<h3>' + esc(row.title) + '</h3><div class="strip"></div>';
+      d.className = 'vrow' + (i === this.r ? ' act' : ''); d.style.top = ((i - this.r) * rowH) + 'px';
+      d.innerHTML = '<h3>' + esc(row.title) + '<em>' + row.items.length + '</em></h3><div class="strip vstrip"></div>';
       box.appendChild(d);
-      var st = row.rank ? new Strip(d.lastChild, { w: 20, render: function (it, k) { return '<div class="rk"><span class="num">' + (k + 1) + '</span>' + posterHTML(it) + '</div>'; } })
-        : new Strip(d.lastChild, { w: 12.2, render: (function (nw) { return function (it) { return posterHTML(it, nw); }; })(row.nw) });
+      var st = new Strip(d.lastChild, { w: 15.4, render: (function (row) { return function (it, k) { return vcard(it, { rank: row.rank ? k + 1 : 0, nw: row.nw }); }; })(row) });
       st.set(row.items, this.cols[i] || 0); this.strips[i] = st;
     }
     this.mark();
   };
   VodTab.prototype.mark = function () {
     for (var i in this.strips) this.strips[i].setActive(this.focused && +i === this.r);
-    var m = $('#rmark'); if (m) m.style.opacity = this.focused ? 1 : 0;
     this.hero();
   };
   VodTab.prototype.hero = function () { var self = this; clearTimeout(this.ht); this.ht = setTimeout(function () { self.heroNow(); }, 110); };
   VodTab.prototype.heroNow = function () {
     var st = this.strips && this.strips[this.r]; if (!st) return;
     var it = st.cur(); if (!it) return;
-    $('#hc').innerHTML = heroHTML(it);
-    $('#htag').innerHTML = tagHTML(it);
-    var bg = heroBg(it);
-    $('#hbg').style.backgroundImage = bg; $('#hbb').style.backgroundImage = bg;
+    $('#hc').innerHTML = vheroHTML(it);
+    $('#vamb').style.backgroundImage = heroBg(it);
   };
   VodTab.prototype.focus = function (on) { this.focused = on; if (this.strips) this.mark(); };
   VodTab.prototype.key = function (k) {
@@ -1218,20 +1234,24 @@
     this.it = it; this.b = 0; this.z = 'a'; this.ri = 0;
     this.rel = DATA.movies.filter(function (x) { return x !== it && x.group === it.group && allowed(x); }).slice(0, 24);
   }
+  /* fundo dos detalhes: cor do pôster bem desfocada (leve para a TV) */
+  function ambHTML(it) { return '<div class="vt-bgw full"><div class="vt-amb" style="background-image:' + esc(heroBg(it)) + '"></div></div><div class="md-shade"></div>'; }
+  function bigPoster(it, cls) { return '<div class="' + cls + (it.logo ? ' img' : '') + '" style="background-image:' + art(it.id) + '"><span class="vt">' + esc(it.title || it.name) + '</span>' + pimg(it.logo) + '</div>'; }
   MovieScreen.prototype.mount = function (r) { this.r = r; this.draw(); };
   MovieScreen.prototype.draw = function () {
     var it = this.it, pr = progress()[it.id], resume = pr && pr.d && pr.p > 30 && pr.p / pr.d < .95, self = this, q = quality(it.name), A = this.z === 'a';
     this.btns = [];
     if (resume) { this.btns.push({ t: SV.play + 'Continuar de ' + fmtTime(pr.p), fn: function () { play(it, { start: pr.p }); } }); this.btns.push({ t: SV.redo + 'Assistir do início', fn: function () { play(it); } }); }
     else this.btns.push({ t: SV.play + 'Assistir', fn: function () { play(it); } });
-    this.btns.push({ t: (isFav(it.id) ? SV.check + 'Na minha lista' : SV.plus + 'Adicionar à minha lista'), fn: function () { toggleFav(it.id); self.draw(); } });
-    var tiles = '<div class="tiles dt"><div class="tl">' + SV.folder + '<div><small>Categoria</small><b class="ell">' + esc(it.group) + '</b></div></div>' +
-      '<div class="tl">' + SV.redo + '<div><small>' + (resume ? 'Assistido' : 'Ano') + '</small><b>' + (resume ? Math.round(pr.p / pr.d * 100) + '%' : (it.year || '—')) + '</b></div></div>' +
-      '<div class="tl">' + SV.hd + '<div><small>Qualidade</small><b>' + (q || '—') + '</b></div></div></div>';
-    this.r.innerHTML = '<div class="screen det">' + bgLayer(it) + '<div class="dl">' + LOGO_SM + heroHTML(it) + tiles + '<div class="acts">' +
-      this.btns.map(function (b, i) { return '<div class="ac ' + (i === 0 ? 'pri ' : '') + (A && i === self.b ? 'on' : '') + '">' + b.t + '</div>'; }).join('') + '</div></div>' + tagHTML(it) +
-      (this.rel.length ? '<div class="rel"><div class="sl">Da mesma categoria</div><div class="strip" id="mrel"></div></div>' : '') + '</div>';
-    if (this.rel.length) { this.st = new Strip($('#mrel'), { w: 12.2, render: function (x) { return posterHTML(x); } }); this.st.set(this.rel, this.ri); this.st.setActive(!A); }
+    this.btns.push({ t: (isFav(it.id) ? SV.check + 'Na minha lista' : SV.plus + 'Minha lista'), fn: function () { toggleFav(it.id); self.draw(); } });
+    var meta = '<span>' + esc(it.group) + '</span>' + (it.year ? '<i>•</i><span>' + it.year + '</span>' : '');
+    var prog = resume ? '<div class="md-prog"><div class="bar"><i style="width:' + Math.round(pr.p / pr.d * 100) + '%"></i></div><span>Faltam ' + fmtTime(pr.d - pr.p) + '</span></div>' : '';
+    this.r.innerHTML = '<div class="screen md">' + ambHTML(it) + '<div class="md-logo">' + LOGO_SM + '</div>' + bigPoster(it, 'md-poster') +
+      '<div class="md-info"><div class="vk"><span class="bd">FILME</span>' + (q ? '<span class="bd q2">' + q + '</span>' : '') + (isFav(it.id) ? '<span class="bd fav">★ Minha lista</span>' : '') + '</div>' +
+      '<h1>' + esc(it.title || it.name) + '</h1><div class="vm">' + meta + '</div>' + prog +
+      '<div class="md-acts">' + this.btns.map(function (b, i) { return '<div class="mb ' + (i === 0 ? 'pri ' : '') + (A && i === self.b ? 'on' : '') + '">' + b.t + '</div>'; }).join('') + '</div></div>' +
+      (this.rel.length ? '<div class="md-rel"><h3>Da mesma categoria<em>' + this.rel.length + '</em></h3><div class="strip vstrip sm" id="mrel"></div></div>' : '') + '</div>';
+    if (this.rel.length) { this.st = new Strip($('#mrel'), { w: 12.4, render: function (x) { return vcard(x); } }); this.st.set(this.rel, this.ri); this.st.setActive(!A); }
   };
   MovieScreen.prototype.key = function (k) {
     if (this.z === 'r') {
@@ -1241,9 +1261,12 @@
       if (k === 'ok') { App.push(new MovieScreen(this.st.cur())); return true; }
       return k !== 'back';
     }
-    if (k === 'up' && this.b > 0) this.b--;
-    else if (k === 'down') { if (this.b < this.btns.length - 1) this.b++; else if (this.rel.length) this.z = 'r'; }
-    else if (k === 'ok') { this.btns[this.b].fn(); return true; } else return k !== 'back';
+    if (k === 'left' && this.b > 0) this.b--;
+    else if (k === 'right' && this.b < this.btns.length - 1) this.b++;
+    else if (k === 'down') { if (this.rel.length) this.z = 'r'; }
+    else if (k === 'ok') { this.btns[this.b].fn(); return true; }
+    else if (k === 'left' || k === 'right' || k === 'up') return true;
+    else return k !== 'back';
     this.draw(); return true;
   };
   MovieScreen.prototype.notify = function (w) { if (w === 'progress') { this.b = 0; this.z = 'a'; this.draw(); } };
@@ -1257,14 +1280,17 @@
   }
   SeriesScreen.prototype.eps = function () { return this.s.seasons[this.s.seasonList[this.si]] || []; };
   SeriesScreen.prototype.mount = function (r) {
-    var s = this.s, pr = progress(), thumb = esc(heroBg(s));
-    r.innerHTML = '<div class="screen det">' + bgLayer(s) + '<div class="dl ser">' + LOGO_SM + '<div id="shc"></div><div class="acts" id="sacts"></div><div class="sl">Temporadas</div><div class="sns"><div class="tr" id="ssn"></div></div></div>' +
-      '<div class="eps-r"><div class="sl">Episódios <em id="sen"></em></div><div id="seps" class="epl"></div></div></div>';
+    var s = this.s, pr = progress();
+    r.innerHTML = '<div class="screen md">' + ambHTML(s) + '<div class="md-logo">' + LOGO_SM + '</div>' + bigPoster(s, 'sd-poster') +
+      '<div class="sd-info" id="shc"></div>' +
+      '<div class="sd-left"><h3>Temporadas<em>' + s.seasonList.length + '</em></h3><div class="sns2"><div class="tr" id="ssn"></div></div></div>' +
+      '<div class="sd-eps"><h3 id="sen"></h3><div id="seps" class="epl2"></div></div></div>';
     this.vl = new VList($('#seps'), {
-      h: 9.6, render: function (e) {
-        var p = pr[e.id], pg = p && p.d ? Math.min(100, p.p / p.d * 100) : 0;
-        return '<div class="ep"><div class="th" style="background-image:' + thumb + '"><span class="se">T' + e.s + ' E' + e.e + '</span>' + (pg > 2 && pg < 95 ? '<div class="pg"><i style="width:' + pg + '%"></i></div>' : '') + '</div>' +
-          '<div class="tx"><b class="ell">' + esc(e.title || ('Episódio ' + e.e)) + '</b><small>' + (pg >= 95 ? '✓ Assistido' : pg > 2 ? 'Faltam ' + fmtTime(p.d - p.p) : 'Temporada ' + e.s + ' • Episódio ' + e.e) + '</small></div></div>';
+      h: 7.4, render: function (e) {
+        var p = pr[e.id], pg = p && p.d ? Math.min(100, p.p / p.d * 100) : 0, done = pg >= 95;
+        return '<div class="ep2' + (done ? ' done' : '') + '"><span class="en">' + e.e + '</span><div class="tx"><b class="ell">' + esc(e.title || ('Episódio ' + e.e)) + '</b>' +
+          '<small>' + (done ? '✓ Assistido' : pg > 2 ? 'Faltam ' + fmtTime(p.d - p.p) : 'Temporada ' + e.s + ' • Episódio ' + e.e) + '</small>' +
+          (pg > 2 && !done ? '<div class="pb"><i style="width:' + pg + '%"></i></div>' : '') + '</div><em class="pl">' + SV.play + '</em></div>';
       }
     });
     this.draw(true);
@@ -1272,14 +1298,16 @@
   SeriesScreen.prototype.draw = function (full) {
     var s = this.s, self = this, last = Prof.get('lastEp', {})[s.id], le = last && DATA.byId[last];
     this.btns = [{ t: SV.play + (le ? 'Continuar T' + le.s + ':E' + le.e : 'Assistir T' + s.seasonList[0] + ':E1'), fn: function () { var e = le || s.seasons[s.seasonList[0]][0]; var p = progress()[e.id]; play(e, { start: p && p.d && p.p / p.d < .95 ? p.p : 0 }); } },
-      { t: isFav(s.id) ? SV.check + 'Na minha lista' : SV.plus + 'Adicionar à minha lista', fn: function () { toggleFav(s.id); self.draw(); } }];
-    var L = this.z === 'left';
-    $('#shc').innerHTML = heroHTML(s);
-    $('#sacts').innerHTML = this.btns.map(function (b, i) { return '<div class="ac ' + (i === 0 ? 'pri ' : '') + (L && self.li === i ? 'on' : '') + '">' + b.t + '</div>'; }).join('');
+      { t: isFav(s.id) ? SV.check + 'Na minha lista' : SV.plus + 'Minha lista', fn: function () { toggleFav(s.id); self.draw(); } }];
+    var L = this.z === 'left', q = quality(s.name);
+    $('#shc').innerHTML = '<div class="vk"><span class="bd">SÉRIE</span>' + (q ? '<span class="bd q2">' + q + '</span>' : '') + (isFav(s.id) ? '<span class="bd fav">★ Minha lista</span>' : '') + '</div>' +
+      '<h1>' + esc(s.title || s.name) + '</h1><div class="vm"><span>' + esc(s.group) + '</span><i>•</i><span>' + s.seasonList.length + (s.seasonList.length > 1 ? ' temporadas' : ' temporada') + '</span><i>•</i><span>' + s.count + ' episódios</span></div>' +
+      (le ? '<p class="vl2">Último assistido: temporada ' + le.s + ', episódio ' + le.e + '.</p>' : '') +
+      '<div class="md-acts">' + this.btns.map(function (b, i) { return '<div class="mb ' + (i === 0 ? 'pri ' : '') + (L && self.li === i ? 'on' : '') + '">' + b.t + '</div>'; }).join('') + '</div>';
     var sn = $('#ssn');
-    sn.innerHTML = s.seasonList.map(function (n, i) { return '<div class="sn' + (i === self.si ? ' cur' : '') + (L && self.li === i + 2 ? ' on' : '') + '"><span>Temporada ' + n + '</span><em>' + s.seasons[n].length + ' episódios</em></div>'; }).join('');
-    sn.style.transform = 'translateY(' + (-Math.max(0, this.si - 2) * 4.4 * remPx()) + 'px)';
-    $('#sen').textContent = '· Temporada ' + s.seasonList[this.si];
+    sn.innerHTML = s.seasonList.map(function (n, i) { return '<div class="sn2' + (i === self.si ? ' cur' : '') + (L && self.li === i + 2 ? ' on' : '') + '"><span>Temporada ' + n + '</span><em>' + s.seasons[n].length + '</em></div>'; }).join('');
+    sn.style.transform = 'translateY(' + (-Math.max(0, this.si - 3) * 5 * remPx()) + 'px)';
+    $('#sen').innerHTML = 'Episódios<em>Temporada ' + s.seasonList[this.si] + ' · ' + this.eps().length + '</em>';
     if (full) this.vl.set(this.eps(), this.ei);
     this.vl.setActive(this.z === 'eps');
   };
@@ -1288,14 +1316,23 @@
     if (this.z === 'eps') {
       if (k === 'up') { this.vl.move(-1); this.ei = this.vl.i; return true; }
       if (k === 'down') { this.vl.move(1); this.ei = this.vl.i; return true; }
-      if (k === 'left' || k === 'back') { this.z = 'left'; this.draw(); return true; }
+      if (k === 'left' || k === 'back') { this.z = 'left'; this.li = this.si + 2; this.draw(); return true; }
       if (k === 'ok') { var e = this.vl.cur(); if (e) { var p = progress()[e.id]; play(e, { start: p && p.d && p.p / p.d < .95 ? p.p : 0 }); } return true; }
       return true;
     }
-    if (k === 'up') { if (this.li > 0) this.li--; else return true; }
+    if (this.li < 2) { // botões (lado a lado)
+      if (k === 'left') { if (this.li > 0) this.li--; }
+      else if (k === 'right') { if (this.li < 1) this.li++; }
+      else if (k === 'down') this.li = this.si + 2;
+      else if (k === 'ok') { this.btns[this.li].fn(); return true; }
+      else if (k === 'up') return true;
+      else return k !== 'back';
+      this.draw(); return true;
+    }
+    if (k === 'up') { if (this.li > 2) this.li--; else this.li = 0; }
     else if (k === 'down') { if (this.li < n - 1) this.li++; }
-    else if (k === 'right') { if (this.eps().length) { if (this.li >= 2) this.li = this.si + 2; this.z = 'eps'; } }
-    else if (k === 'ok') { if (this.li < 2) { this.btns[this.li].fn(); return true; } this.z = 'eps'; }
+    else if (k === 'right' || k === 'ok') { if (this.eps().length) this.z = 'eps'; }
+    else if (k === 'left') return true;
     else return k !== 'back';
     if (this.li >= 2 && this.li - 2 !== this.si) { this.si = this.li - 2; this.ei = 0; this.draw(true); return true; }
     this.draw(); return true;
