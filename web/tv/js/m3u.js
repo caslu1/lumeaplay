@@ -28,6 +28,7 @@
         if (/^#EXTINF/i.test(l)) {
           var name = titleOf(l) || attr(l, 'tvg-name');
           cur = { name: name, logo: attr(l, 'tvg-logo'), group: attr(l, 'group-title') || 'Outros', tvg: attr(l, 'tvg-id') };
+          var ad = +(attr(l, 'catchup-days') || attr(l, 'timeshift') || attr(l, 'tvg-rec')) || 0; if (!ad && attr(l, 'catchup')) ad = 7; if (ad > 0) cur.arc = Math.min(14, ad);
         } else if (cur && /^#EXTGRP:/i.test(l)) { cur.group = l.slice(8).trim() || cur.group; }
         continue;
       }

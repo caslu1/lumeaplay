@@ -317,7 +317,7 @@
       var v = $('#wv'); this.osd();
       if (k === 'back') this.close();
       else if (k === 'opt') this.cycleQuality();
-      else if (k === 'ok') { if (v.paused) v.play(); else v.pause(); }
+      else if (k === 'ok') { if (v.paused) { var pr = v.play(); if (pr && pr.catch) pr.catch(function () { }); } else v.pause(); }
       else if (k === 'left' && this.p.type === 'vod') v.currentTime = Math.max(0, v.currentTime - 10);
       else if (k === 'right' && this.p.type === 'vod') v.currentTime = v.currentTime + 10;
       else if ((k === 'up' || k === 'down' || k === 'chup' || k === 'chdown') && this.p.type === 'live' && this.list.length > 1) {
@@ -652,7 +652,8 @@
   };
 
   /* ===== Home com abas ===== */
-  var TABS = [['tv', 'Canais'], ['film', 'Filmes'], ['ser', 'Séries'], ['cog', 'Configurações']];
+  var TABS = [['tv', 'Canais'], ['film', 'Filmes'], ['ser', 'Séries'], ['rec', 'Playback'], ['cog', 'Configurações']];
+  var NT = TABS.length;
   function HomeScreen(tab) { this.tab = tab || store.get('lastTab', 0); this.zone = 'tab'; this.nf = this.tab; this.tabs = {}; }
   HomeScreen.prototype.mount = function (r) {
     var p = Prof.cur();
@@ -663,23 +664,23 @@
   HomeScreen.prototype.drawNav = function () {
     var self = this;
     $('#navi').innerHTML = TABS.map(function (t, i) { return '<div class="' + (self.zone === 'nav' && self.nf === i ? 'on' : i === self.tab ? 'sel' : '') + '">' + t[1] + '</div>'; }).join('');
-    $('#nsr').classList.toggle('on', this.zone === 'nav' && this.nf === 4);
-    $('#nav-av').classList.toggle('on', this.zone === 'nav' && this.nf === 5);
+    $('#nsr').classList.toggle('on', this.zone === 'nav' && this.nf === NT);
+    $('#nav-av').classList.toggle('on', this.zone === 'nav' && this.nf === NT + 1);
   };
   HomeScreen.prototype.openTab = function (i, focus) {
     this.tab = i; store.set('lastTab', i);
-    if (!this.tabs[i]) this.tabs[i] = i === 0 ? new LiveTab() : i === 1 ? new VodTab('movies') : i === 2 ? new VodTab('series') : new SettingsTab();
+    if (!this.tabs[i]) this.tabs[i] = i === 0 ? new LiveTab() : i === 1 ? new VodTab('movies') : i === 2 ? new VodTab('series') : i === 3 ? new PlaybackTab() : new SettingsTab();
     var el = $('#tab'); el.innerHTML = ''; this.tabs[i].mount(el);
     if (focus) { this.zone = 'tab'; this.tabs[i].focus(true); } else this.tabs[i].focus(false);
     this.drawNav();
   };
   HomeScreen.prototype.key = function (k) {
     if (this.zone === 'nav') {
-      if (k === 'left' && this.nf > 0) { this.nf--; if (this.nf < 4) this.openTab(this.nf, false); }
-      else if (k === 'right' && this.nf < 5) { this.nf++; if (this.nf < 4) this.openTab(this.nf, false); }
-      else if (k === 'down' || (k === 'ok' && this.nf < 4)) { this.nf = Math.min(this.nf, 3); if (this.nf !== this.tab) this.openTab(this.nf, false); this.zone = 'tab'; this.tabs[this.tab].focus(true); }
-      else if (k === 'ok' && this.nf === 4) { App.push(new SearchScreen()); return true; }
-      else if (k === 'ok' && this.nf === 5) { App.show(new ProfScreen()); return true; }
+      if (k === 'left' && this.nf > 0) { this.nf--; if (this.nf < NT) this.openTab(this.nf, false); }
+      else if (k === 'right' && this.nf < NT + 1) { this.nf++; if (this.nf < NT) this.openTab(this.nf, false); }
+      else if (k === 'down' || (k === 'ok' && this.nf < NT)) { this.nf = Math.min(this.nf, NT - 1); if (this.nf !== this.tab) this.openTab(this.nf, false); this.zone = 'tab'; this.tabs[this.tab].focus(true); }
+      else if (k === 'ok' && this.nf === NT) { App.push(new SearchScreen()); return true; }
+      else if (k === 'ok' && this.nf === NT + 1) { App.show(new ProfScreen()); return true; }
       else if (k === 'back') { if (this.tab !== 0 && false) { } return false; }
       else return /^(up|left|right)$/.test(k);
       this.drawNav(); return true;
@@ -868,6 +869,187 @@
   };
   LiveTab.prototype.notify = function (w, it) {
     if (w === 'live' && this.vl) { this.C = this.cats(); if (this.mode === 'chs' && it) { var idx = this.C[this.ci].items.indexOf(it); if (idx >= 0) this.vl.i = idx; } this.vl.refresh(); this.preview(); }
+  };
+
+  /* ===== Aba Playback (assistir o que já passou) =====
+     - canais com arquivo: atributo catchup / catchup-days / timeshift / tvg-rec na lista
+       ou tv_archive=1 na API Xtream (get_live_streams)
+     - programação do dia: get_simple_data_table; vídeo: /timeshift/usuário/senha/duração/AAAA-MM-DD:HH-MM/id.ts */
+  var WD3 = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'], MO3 = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  function dayStart(off) { var d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - off); return d.getTime(); }
+  function isDemo() { var s = Session.get(); return !!(s && s.m3u === 'demo:'); }
+  function apiGet(x, action, extra, big) {
+    var api = x.base + '/player_api.php?username=' + encodeURIComponent(x.user) + '&password=' + encodeURIComponent(x.pass) + '&action=' + action + (extra || '');
+    var u = N ? (big ? '/proxy?cache=1&url=' : '/proxy?mem=1&url=') + encodeURIComponent(api) : api;
+    return fetch(u).then(function (r) { if (!r.ok) throw new Error('api'); return r.json(); });
+  }
+  var Archive = {
+    map: null, busy: null,
+    /* dias de arquivo por id de canal */
+    load: function () {
+      if (this.map) return Promise.resolve(this.map);
+      if (this.busy) return this.busy;
+      var self = this, m = {}, live = DATA.live;
+      live.forEach(function (it, i) { if (it.arc) m[it.id] = it.arc; else if (isDemo() && i % 3 === 0) m[it.id] = 7; });
+      var x = null; for (var i = 0; i < live.length && !x; i++) x = xtream(live[i].url);
+      if (!x || isDemo()) { this.map = m; return Promise.resolve(m); }
+      var byStream = {}; live.forEach(function (it) { var y = xtream(it.url); if (y) byStream[y.id] = it.id; });
+      this.busy = apiGet(x, 'get_live_streams', '', true).then(function (j) {
+        (j || []).forEach(function (s) { var id = byStream[s.stream_id]; if (id && +s.tv_archive === 1) m[id] = Math.max(1, Math.min(14, +s.tv_archive_duration || 3)); });
+      }).catch(function () { }).then(function () { self.map = m; self.busy = null; return m; });
+      return this.busy;
+    },
+    c: {},
+    /* programas (já começados) do canal, todos os dias de arquivo */
+    progs: function (it, days) {
+      var key = it.id, e = this.c[key];
+      if (e && Date.now() - e.t < 10 * 60000) return Promise.resolve(e.l);
+      var self = this, done = function (l) { self.c[key] = { t: Date.now(), l: l }; return l; };
+      if (isDemo()) return Promise.resolve(done(this.demo(it, days)));
+      var x = xtream(it.url); if (!x) return Promise.resolve([]);
+      return apiGet(x, 'get_simple_data_table', '&stream_id=' + x.id).then(function (j) {
+        var now = Date.now(), from = dayStart(days);
+        return done(((j && j.epg_listings) || []).map(function (p) {
+          return { t: b64(p.title), d: b64(p.description), s: +p.start_timestamp * 1000, e: +p.stop_timestamp * 1000, st: String(p.start || ''), arc: +p.has_archive === 1 };
+        }).filter(function (p) { return p.t && p.s < now && p.s >= from; }).sort(function (a, b) { return a.s - b.s; }));
+      }).catch(function () { return []; });
+    },
+    demo: function (it, days) {
+      var out = [], h = 0, id = String(it.id); for (var z = 0; z < id.length; z++) h = (h * 31 + id.charCodeAt(z)) >>> 0;
+      var s = dayStart(days), now = Date.now(), k = 0;
+      while (s < now) { var len = (30 + ((h + k * 7) % 4) * 30) * 60000; out.push({ t: DEMO_SHOWS[(h + k) % DEMO_SHOWS.length], d: 'Programa de exemplo da lista de demonstração. Aperte OK para assistir desde o início.', s: s, e: s + len, st: '', arc: true }); s += len; k++; }
+      return out;
+    },
+    url: function (it, p) {
+      if (isDemo()) return it.url;
+      var x = xtream(it.url); if (!x) return it.url;
+      var d = new Date(p.s), st = /^\d{4}-\d\d-\d\d \d\d:\d\d/.test(p.st) ? p.st.slice(0, 10) + ':' + p.st.slice(11, 13) + '-' + p.st.slice(14, 16)
+        : d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ':' + pad(d.getHours()) + '-' + pad(d.getMinutes());
+      var dur = Math.max(1, Math.ceil((p.e - p.s) / 60000)), ext = /\.m3u8(\?|$)/i.test(it.url) ? '.m3u8' : '.ts';
+      return x.base + '/timeshift/' + encodeURIComponent(x.user) + '/' + encodeURIComponent(x.pass) + '/' + dur + '/' + st + '/' + x.id + ext;
+    }
+  };
+
+  function PlaybackTab() { this.zone = 'ch'; this.day = 0; this.ci = 0; this.req = 0; }
+  PlaybackTab.prototype.mount = function (el) {
+    var self = this; this.el = el;
+    el.innerHTML = '<div class="pb-left"><div class="lv-head"><span class="lbl">Playback</span><em id="pbn"></em></div><div id="pbl" class="lv-list"></div></div>' +
+      '<div class="pb-main"><div class="pb-top" id="pbt"></div><div class="pb-days" id="pbd"></div>' +
+      '<div class="pb-body"><div class="pb-progs"><div class="pb-ph" id="pbh"></div><div id="pbp" class="pb-plist"></div></div><div class="pb-info" id="pbi"></div></div></div>';
+    this.vl = new VList($('#pbl'), {
+      h: 7.2, empty: 'Carregando canais com Playback…',
+      render: function (it) {
+        return '<div class="lc"><div class="th">' + logoHTML(it) + '</div><div class="tx"><div class="nm"><span class="no">' + (it.num || '') + '</span><b class="ell">' + esc(it.name) + '</b></div>' +
+          '<small class="ell">' + self.map[it.id] + (self.map[it.id] > 1 ? ' dias de Playback' : ' dia de Playback') + '</small></div></div>';
+      },
+      onFocus: function () { clearTimeout(self.ft); self.ft = setTimeout(function () { self.pickChannel(); }, 220); }
+    });
+    this.pl = new VList($('#pbp'), {
+      h: 6, empty: 'Carregando programação…',
+      render: function (p) {
+        var now = Date.now(), live = p.e > now;
+        return '<div class="pr' + (live ? ' nowp' : '') + '"><span class="tm">' + hm(p.s) + '</span><div class="tx"><b class="ell">' + esc(p.t) + '</b><small>' + hm(p.s) + ' – ' + hm(p.e) + ' · ' + Math.round((p.e - p.s) / 60000) + ' min</small></div>' +
+          (live ? '<em class="tg">AGORA</em>' : '<em class="pl">' + SV.play + '</em>') + '</div>';
+      },
+      onFocus: function () { self.info(); }
+    });
+    $('#pbn').textContent = '…';
+    Archive.load().then(function (m) {
+      if (!document.getElementById('pbl')) return;
+      self.map = m; self.chs = DATA.live.filter(function (it) { return m[it.id] && allowed(it); });
+      $('#pbn').textContent = self.chs.length + ' canais';
+      if (!self.chs.length) { self.vl.empty = 'Sua lista não tem canais com Playback.'; self.vl.set([]); self.drawEmpty(); return; }
+      self.vl.set(self.chs, self.ci); self.sync(); self.pickChannel();
+    });
+    this.map = {}; this.drawTop(); this.drawDays();
+  };
+  PlaybackTab.prototype.drawEmpty = function () {
+    $('#pbt').innerHTML = '<div class="pb-ch"><div class="tx"><h2>Assista ao que já passou</h2><p>Canais com Playback guardam a programação dos últimos dias para você assistir quando quiser.</p></div></div>';
+    $('#pbd').innerHTML = ''; $('#pbh').innerHTML = ''; this.pl.empty = 'Nenhum canal da sua lista oferece Playback.'; this.pl.set([]);
+    $('#pbi').innerHTML = '<div class="sec">Como funciona</div><p class="desc">O Playback depende do seu servidor. Quando ele grava os canais, eles aparecem aqui automaticamente.</p>';
+  };
+  PlaybackTab.prototype.cur = function () { return this.vl && this.vl.cur(); };
+  PlaybackTab.prototype.days = function () { var it = this.cur(); return Math.min(7, (it && this.map[it.id]) || 0); };
+  PlaybackTab.prototype.drawTop = function () {
+    var it = this.cur(); if (!it) return;
+    var n = this.map[it.id];
+    $('#pbt').innerHTML = '<div class="pb-ch"><div class="th">' + logoHTML(it) + '</div><div class="tx"><h2 class="ell">' + esc(it.name) + '</h2><p>' + esc(it.group) + ' · Disponível por ' + n + (n > 1 ? ' dias' : ' dia') + '</p></div><span class="rec">● PLAYBACK</span></div>';
+  };
+  PlaybackTab.prototype.drawDays = function () {
+    var n = this.days(), h = '';
+    for (var i = 0; i <= n; i++) {
+      var d = new Date(dayStart(i)), lb = i === 0 ? 'Hoje' : i === 1 ? 'Ontem' : WD3[d.getDay()];
+      h += '<div class="dy' + (i === this.day ? ' sel' : '') + (this.zone === 'day' && i === this.day ? ' on' : '') + '"><small>' + lb + '</small><b>' + d.getDate() + ' ' + MO3[d.getMonth()] + '</b></div>';
+    }
+    $('#pbd').innerHTML = h;
+  };
+  PlaybackTab.prototype.pickChannel = function () {
+    var it = this.cur(); if (!it) return;
+    if (this.day > this.days()) this.day = 0;
+    this.drawTop(); this.drawDays(); this.loadDay();
+  };
+  PlaybackTab.prototype.loadDay = function () {
+    var self = this, it = this.cur(), rq = ++this.req; if (!it) return;
+    var d0 = dayStart(this.day), d1 = d0 + 86400000, d = new Date(d0);
+    $('#pbh').innerHTML = '<span class="lbl">' + (this.day === 0 ? 'Hoje' : this.day === 1 ? 'Ontem' : WD3[d.getDay()]) + ', ' + d.getDate() + ' ' + MO3[d.getMonth()] + '</span><em></em>';
+    this.pl.empty = 'Carregando programação…'; this.pl.set([]); this.info();
+    Archive.progs(it, this.days()).then(function (all) {
+      if (rq !== self.req || !document.getElementById('pbp')) return;
+      var l = all.filter(function (p) { return p.s >= d0 && p.s < d1; });
+      self.pl.empty = all.length ? 'Nenhum programa gravado neste dia.' : 'Este canal não tem programação para o Playback.';
+      $('#pbh em').textContent = l.length ? l.length + (l.length > 1 ? ' programas' : ' programa') : '';
+      var start = 0; if (self.day === 0 && l.length) start = Math.max(0, l.length - 2);
+      self.pl.set(l, start); self.sync(); self.info();
+    });
+  };
+  PlaybackTab.prototype.info = function () {
+    var it = this.cur(), p = this.pl && this.pl.cur(), el = $('#pbi'); if (!el) return;
+    if (!it || !p) { el.innerHTML = '<div class="sec">Programa</div><p class="mut">Escolha um programa na lista para ver os detalhes.</p>'; return; }
+    var d = new Date(p.s), live = p.e > Date.now();
+    el.innerHTML = '<div class="sec">' + (live ? 'Passando agora' : 'Já passou') + '</div><h2 class="ell2">' + esc(p.t) + '</h2>' +
+      '<p class="sub">' + WD3[d.getDay()] + ', ' + d.getDate() + ' ' + MO3[d.getMonth()] + ' · ' + hm(p.s) + ' – ' + hm(p.e) + ' · ' + Math.round((p.e - p.s) / 60000) + ' min</p>' +
+      '<p class="desc">' + esc(p.d || 'Sem descrição.') + '</p>' +
+      '<div class="fns"><div class="fn pri' + (this.zone === 'pr' ? ' on' : '') + '">' + SV.play + (live ? 'Assistir do início' : 'Assistir') + '</div></div>';
+  };
+  PlaybackTab.prototype.sync = function () {
+    if (this.vl) this.vl.setActive(this.focused && this.zone === 'ch');
+    if (this.pl) this.pl.setActive(this.focused && this.zone === 'pr');
+    if (this.chs && this.chs.length) this.drawDays();
+    this.info();
+  };
+  PlaybackTab.prototype.focus = function (on) { this.focused = on; if (!on) this.zone = 'ch'; this.sync(); };
+  PlaybackTab.prototype.play = function () {
+    var it = this.cur(), p = this.pl.cur(); if (!it || !p) return;
+    var d = new Date(p.s);
+    play({ type: 'movie', id: 'pb:' + it.id + ':' + p.s, name: it.name + ' · ' + p.t, title: it.name + ' · ' + p.t, group: WD3[d.getDay()] + ', ' + d.getDate() + ' ' + MO3[d.getMonth()] + ' · ' + hm(p.s) + ' – ' + hm(p.e), url: Archive.url(it, p) });
+  };
+  PlaybackTab.prototype.key = function (k) {
+    if (!this.chs || !this.chs.length) return false;
+    if (this.zone === 'ch') {
+      if (k === 'up') return this.vl.move(-1);
+      if (k === 'down') { this.vl.move(1); return true; }
+      if (k === 'chup') { this.vl.move(-8); return true; }
+      if (k === 'chdown') { this.vl.move(8); return true; }
+      if (k === 'right' || k === 'ok') { clearTimeout(this.ft); if (k === 'ok') this.pickChannel(); this.zone = this.pl.items.length ? 'pr' : 'day'; this.sync(); return true; }
+      return false;
+    }
+    if (this.zone === 'day') {
+      var n = this.days();
+      // a faixa vai de Hoje (esquerda) para os dias anteriores (direita)
+      if (k === 'left') { if (this.day > 0) { this.day--; this.loadDay(); this.drawDays(); } else { this.zone = 'ch'; this.sync(); } return true; }
+      if (k === 'right') { if (this.day < n) { this.day++; this.loadDay(); } this.drawDays(); return true; }
+      if (k === 'down' || k === 'ok') { if (this.pl.items.length) { this.zone = 'pr'; this.sync(); } return true; }
+      if (k === 'back') { this.zone = 'ch'; this.sync(); return true; }
+      return false;
+    }
+    // zona dos programas
+    if (k === 'up') { if (!this.pl.move(-1)) { this.zone = 'day'; this.sync(); } return true; }
+    if (k === 'down') { this.pl.move(1); return true; }
+    if (k === 'chup') { this.pl.move(-8); return true; }
+    if (k === 'chdown') { this.pl.move(8); return true; }
+    if (k === 'ok' || k === 'right') { this.play(); return true; }
+    if (k === 'left' || k === 'back') { this.zone = 'ch'; this.sync(); return true; }
+    return false;
   };
 
   /* ===== Filmes e Séries ===== */
@@ -1164,7 +1346,7 @@
   setInterval(tick, 15000);
   function refreshAll() { var h = App.stack[0]; if (h instanceof HomeScreen) { var keep = h.tabs[h.tab]; h.tabs = {}; h.tabs[h.tab] = keep; } }
   function reloadList() {
-    loadList(true).then(function () { toast('Lista atualizada!'); App.show(new HomeScreen(3)); })
+    loadList(true).then(function () { toast('Lista atualizada!'); App.show(new HomeScreen(4)); })
       .catch(function () { toast('Não foi possível atualizar a lista agora. Tente mais tarde.'); });
   }
   function goHome() {
