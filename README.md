@@ -16,7 +16,7 @@ App IPTV para TV (Android TV, Fire TV, TV Box, celular, LG webOS, Samsung Tizen 
 
 1. No **painel**, você cola o link M3U do cliente, escolhe a validade e gera um código (ex.: `482-910-375`).
 2. O cliente abre o **LumeaPlay** na TV e digita os 9 números.
-3. O app busca o código no Firebase, confere se está ativo e no prazo, prende o código àquele aparelho e baixa a lista.
+3. O app busca o código no Supabase, confere se está ativo e no prazo, prende o código àquele aparelho e baixa a lista.
 4. Canais, filmes e séries são separados automaticamente a partir da lista M3U.
 
 No painel dá para renovar, bloquear, liberar o aparelho, editar o link e **trocar o DNS de todos os clientes de uma vez**.
@@ -25,24 +25,23 @@ No painel dá para renovar, bloquear, liberar o aparelho, editar o link e **troc
 
 ```
 web/tv/        app de TV (HTML/CSS/JS) — o mesmo código vai dentro do APK
-web/painel/    painel do revendedor (Firebase Auth + Firestore)
+web/painel/    painel do revendedor (Supabase)
 android/       projeto Android: WebView + player ExoPlayer (Media3)
-firestore.rules  regras de segurança do Firestore
+supabase.sql   tabelas e regras de segurança do Supabase
 .github/workflows/apk.yml    gera o APK a cada alteração e publica em Releases
 .github/workflows/pages.yml  publica o painel e o site no GitHub Pages
 ```
 
-## Configurar o Firebase (uma vez)
+## Configurar o Supabase (uma vez)
 
-1. Crie um projeto em https://console.firebase.google.com
-2. **Firestore Database** → Criar banco (modo produção).
-3. **Authentication** → Método de login → **E-mail/senha** → ativar. Na aba *Users*, crie o seu usuário.
-4. **Configurações do projeto** → *Seus apps* → app **Web** → copie `apiKey`, `authDomain`, `projectId` e `appId` para `web/tv/js/config.js`.
-5. **Firestore → Regras**: cole o conteúdo de `firestore.rules`, trocando `SEU_EMAIL_AQUI` pelo seu e-mail, e publique.
+1. Crie um projeto em https://supabase.com (região São Paulo).
+2. **SQL Editor** → cole o conteúdo de `supabase.sql`, troque `SEU_EMAIL_AQUI` pelo seu e-mail e clique em **Run**.
+3. **Authentication → Users → Add user**: crie o seu login do painel (marque *Auto Confirm User*).
+4. **Project Settings → API**: copie a *Project URL* e a chave *anon public* para `web/tv/js/config.js`.
 
 ## Modo demonstração
 
-Com `demo: true` em `web/tv/js/config.js`, o código **123-456-789** abre uma lista de exemplo (sem Firebase). Mude para `false` antes de entregar aos clientes.
+Com `demo: true` em `web/tv/js/config.js`, o código **123-456-789** abre uma lista de exemplo (sem Supabase). Mude para `false` antes de entregar aos clientes.
 
 ## Controle remoto
 

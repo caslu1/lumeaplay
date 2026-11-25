@@ -2,7 +2,6 @@
 (function () {
   'use strict';
   var CFG = window.LUMEA_CONFIG || {};
-  var FB = CFG.firebase || {};
   var N = window.LumeaNative || null;
   var DEMO_CODE = '123456789';
 
@@ -88,40 +87,30 @@
     window.close();
   }
 
-  /* ---------- Firebase (REST) ---------- */
-  function fbReady() { return FB.apiKey && FB.projectId && FB.apiKey.indexOf('COLE') < 0; }
-  function docUrl(code) { return 'https://firestore.googleapis.com/v1/projects/' + FB.projectId + '/databases/(default)/documents/codes/' + code + '?key=' + FB.apiKey; }
-  function fval(v) {
-    if (!v) return null;
-    if ('stringValue' in v) return v.stringValue; if ('timestampValue' in v) return v.timestampValue;
-    if ('integerValue' in v) return +v.integerValue; if ('doubleValue' in v) return v.doubleValue;
-    if ('booleanValue' in v) return v.booleanValue; return null;
+  /* ---------- Supabase ---------- */
+  var SB = CFG.supabase || {};
+  function sbReady() { return SB.url && SB.anonKey && SB.url.indexOf('COLE') < 0 && SB.anonKey.indexOf('COLE') < 0; }
+  function checkCode(code) {
+    return fetch(SB.url.replace(/\/+$/, '') + '/rest/v1/rpc/lp_check', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', apikey: SB.anonKey, Authorization: 'Bearer ' + SB.anonKey },
+      body: JSON.stringify({ p_code: code, p_device: deviceId(), p_model: deviceModel() })
+    }).then(function (r) { if (!r.ok) throw new Error('net'); return r.json(); });
   }
-  function getCode(code) {
-    return fetch(docUrl(code)).then(function (r) {
-      if (r.status === 404 || r.status === 403) return null;
-      if (!r.ok) throw new Error('net');
-      return r.json().then(function (j) { var o = {}, f = j.fields || {}; for (var k in f) o[k] = fval(f[k]); return o; });
-    });
-  }
-  function bindCode(code) {
-    var u = docUrl(code) + '&updateMask.fieldPaths=deviceId&updateMask.fieldPaths=activatedAt&updateMask.fieldPaths=deviceModel&currentDocument.exists=true';
-    return fetch(u, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fields: { deviceId: { stringValue: deviceId() }, activatedAt: { timestampValue: new Date().toISOString() }, deviceModel: { stringValue: deviceModel() } } })
-    }).then(function (r) { if (!r.ok) throw new Error('bind'); });
+  function codeError(d) {
+    if (!d || d.err === 'notfound') return 'Código não encontrado. Confira os números e tente de novo.';
+    if (d.err === 'blocked') return 'Este código está bloqueado. Fale com seu revendedor.';
+    if (d.err === 'expired') return 'Este código venceu em ' + fmtDate(d.expires_at) + '. Fale com seu revendedor para renovar.';
+    if (d.err === 'device') return 'Este código já está sendo usado em outro aparelho.';
+    if (d.err === 'locked') return 'Muitas tentativas erradas. Aguarde alguns minutos e tente de novo.';
+    return '';
   }
   function validate(code) {
     if (CFG.demo && code === DEMO_CODE) return Promise.resolve({ ok: { code: code, name: 'Demonstração', m3u: 'demo:', status: 'ativo', expiresAt: new Date(Date.now() + 30 * 864e5).toISOString() } });
-    if (!fbReady()) return Promise.resolve({ err: 'O painel ainda não foi configurado. Fale com seu revendedor.' });
-    return getCode(code).then(function (d) {
-      if (!d) return { err: 'Código não encontrado. Confira os números e tente de novo.', bad: true };
-      if (d.status && d.status !== 'ativo') return { err: 'Este código está bloqueado. Fale com seu revendedor.' };
-      if (d.expiresAt && new Date(d.expiresAt) < new Date()) return { err: 'Este código venceu em ' + fmtDate(d.expiresAt) + '. Fale com seu revendedor para renovar.' };
-      if (d.deviceId && d.deviceId !== deviceId()) return { err: 'Este código já está sendo usado em outro aparelho.' };
-      d.code = code;
-      if (!d.deviceId) return bindCode(code).then(function () { return { ok: d }; }, function () { return { ok: d }; });
-      return { ok: d };
+    if (!sbReady()) return Promise.resolve({ err: 'O painel ainda não foi configurado. Fale com seu revendedor.' });
+    return checkCode(code).then(function (d) {
+      var e = codeError(d);
+      if (e) return { err: e, bad: !d || d.err === 'notfound' };
+      return { ok: { code: code, name: d.name || '', m3u: d.m3u, expiresAt: d.expires_at, status: 'ativo' } };
     });
   }
 
@@ -949,15 +938,13 @@
   function boot() {
     var s = Session.get();
     if (!s) { App.show(new ActScreen()); return; }
-    if (s.m3u === 'demo:' || s.code === 'm3u' || !fbReady()) { startMain(); return; }
+    if (s.m3u === 'demo:' || s.code === 'm3u' || !sbReady()) { startMain(); return; }
     loading('Verificando seu acesso…');
-    getCode(s.code).then(function (d) {
+    checkCode(s.code).then(function (d) {
       loading();
-      if (!d) { Session.clear(); App.show(new ActScreen('Seu código não existe mais. Digite um novo código.')); return; }
-      if (d.status && d.status !== 'ativo') { App.show(new ActScreen('Seu acesso foi bloqueado. Fale com seu revendedor.')); return; }
-      if (d.expiresAt && new Date(d.expiresAt) < new Date()) { App.show(new ActScreen('Seu acesso venceu em ' + fmtDate(d.expiresAt) + '. Fale com seu revendedor para renovar.')); return; }
-      if (d.deviceId && d.deviceId !== deviceId()) { Session.clear(); App.show(new ActScreen('Este código foi liberado para outro aparelho.')); return; }
-      d.code = s.code; Session.set(d); startMain();
+      var e = codeError(d);
+      if (e) { if (!d || d.err === 'notfound' || d.err === 'device') Session.clear(); App.show(new ActScreen(e)); return; }
+      Session.set({ code: s.code, name: d.name || '', m3u: d.m3u, expiresAt: d.expires_at, status: 'ativo' }); startMain();
     }).catch(function () {
       loading();
       if (s.expiresAt && new Date(s.expiresAt) < new Date()) App.show(new ActScreen('Seu acesso venceu. Fale com seu revendedor.'));
