@@ -539,3 +539,18 @@ body{background:var(--bg)}
 .pb-info h2{font-size:2rem;font-weight:700;letter-spacing:-.02em;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .pb-info .sub{color:#9aa0ad;font-size:1.05rem;margin-top:.5rem}
 .pb-info .desc{-webkit-line-clamp:6}
+
+/* Aba Canais: coluna de categorias/canais maior */
+.lv-left{width:45rem}
+.lv-pv{left:50rem}
+.lv-now{left:50rem;width:36.5rem}
+.lv-next{left:88rem}
+.lc.cat .tx b{font-size:1.5rem}
+.lc.cat .tx{padding-left:1.6rem}
+.lc .cnt{font-size:1.1rem}
+.lc .th{width:9rem}
+.lc .tx b{font-size:1.5rem}
+.lc small{font-size:1.08rem}
+.lc .no{font-size:1.1rem}
+.lc .q{font-size:.85rem}
+.lv-head .lbl{font-size:1.25rem}

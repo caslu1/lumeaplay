@@ -21,9 +21,12 @@
   var ARTC = {};
   var ARTS = ['#1a1f2b', '#1d1b26', '#17212a', '#211d1d', '#1b2224', '#201f29'];
   function art(id) { var h = Math.abs(parseInt(String(id).slice(0, 6), 36) || 0) % ARTS.length; return ARTC[h] || (ARTC[h] = 'linear-gradient(165deg,' + ARTS[h] + ',#0e1015)'); }
-  function cssUrl(u) { return "url('" + String(u).replace(/'/g, '%27').replace(/[\n\r]/g, '') + "')"; }
-  function pimg(u) { return u ? '<img src="' + esc(u) + '" onerror="this.parentNode.classList.remove(\'img\');this.remove()">' : ''; }
-  function img(u, cls) { return u ? '<img' + (cls ? ' class="' + cls + '"' : '') + ' src="' + esc(u) + '" onerror="this.remove()">' : ''; }
+  /* No APK as imagens passam pelo app (cabeçalhos de navegador, sem Referer, cache em disco):
+     resolve logos e pôsteres que o servidor bloqueia quando vêm de dentro de um app. */
+  function iu(u) { u = String(u || '').trim(); return N && /^https?:\/\//i.test(u) ? '/img?url=' + encodeURIComponent(u) : u; }
+  function cssUrl(u) { return "url('" + iu(u).replace(/'/g, '%27').replace(/[\n\r]/g, '') + "')"; }
+  function pimg(u) { return u ? '<img src="' + esc(iu(u)) + '" onerror="this.parentNode.classList.remove(\'img\');this.remove()">' : ''; }
+  function img(u, cls) { return u ? '<img' + (cls ? ' class="' + cls + '"' : '') + ' src="' + esc(iu(u)) + '" onerror="this.remove()">' : ''; }
 
   var store = {
     get: function (k, d) { try { var v = localStorage.getItem('lp_' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
@@ -693,6 +696,9 @@
   HomeScreen.prototype.notify = function (w, a) { var t = this.tabs[this.tab]; if (t && t.notify) t.notify(w, a); };
 
   /* ===== Aba Canais ===== */
+  /* nome do canal sem a qualidade (SD, HD, FHD, 4K…): ela já aparece na etiqueta ao lado */
+  var QRE = /[\[(|]?\s*\b(?:SD|HD|FHD|UHD|4K|8K|HDR|HEVC|H\.?265|H\.?264|1080[pi]?|720p?|2160p?|480p?)\b\s*[\])|]?/gi;
+  function cname(n) { var c = String(n || '').replace(/[ᴴᴰ²³]+/g, ' ').replace(QRE, ' ').replace(/\s*[-|:]\s*$/, '').replace(/\s{2,}/g, ' ').trim(); return c || String(n || ''); }
   function logoHTML(it) { return '<span class="lgo">' + esc(initials(it.name)) + img(it.logo) + '</span>'; }
   function quality(n) {
     n = String(n || '');
@@ -789,7 +795,7 @@
     if (this.mode === 'cats') {
       $('#lvh').innerHTML = '<span class="lbl">Categorias</span><em>' + (this.C.length - 3) + '</em>';
       this.vl = new VList($('#lvl'), {
-        h: 5.4, render: function (c) { return '<div class="lc cat"><div class="tx"><b class="ell">' + esc(c.name) + '</b></div><span class="cnt">' + c.items.length + '</span><div class="ar">›</div></div>'; },
+        h: 6.2, render: function (c) { return '<div class="lc cat"><div class="tx"><b class="ell">' + esc(c.name) + '</b></div><span class="cnt">' + c.items.length + '</span><div class="ar">›</div></div>'; },
         onFocus: function () { self.preview(); }
       });
       this.vl.set(this.C, this.ci);
@@ -797,10 +803,10 @@
       var c = this.C[this.ci];
       $('#lvh').innerHTML = '<span class="bk">‹</span><span class="lbl ell">' + esc(c.name) + '</span><em>' + c.items.length + ' canais</em>';
       this.vl = new VList($('#lvl'), {
-        h: 8, empty: c.name === 'Favoritos' ? 'Nenhum favorito ainda. Escolha um canal, aperte ▶ e depois Favoritar.' : 'Nenhum canal aqui.',
+        h: 8.6, empty: c.name === 'Favoritos' ? 'Nenhum favorito ainda. Escolha um canal, aperte ▶ e depois Favoritar.' : 'Nenhum canal aqui.',
         render: function (it) {
           var q = quality(it.name), p = nowProg(it);
-          return '<div class="lc"><div class="th">' + logoHTML(it) + '</div><div class="tx"><div class="nm"><span class="no">' + (it.num || '') + '</span><b class="ell">' + esc(it.name) + '</b>' + (q ? '<em class="q">' + q + '</em>' : '') + (isFav(it.id) ? '<i class="fv">★</i>' : '') + '</div>' +
+          return '<div class="lc"><div class="th">' + logoHTML(it) + '</div><div class="tx"><div class="nm"><span class="no">' + (it.num || '') + '</span><b class="ell">' + esc(cname(it.name)) + '</b>' + (q ? '<em class="q">' + q + '</em>' : '') + (isFav(it.id) ? '<i class="fv">★</i>' : '') + '</div>' +
             (p ? '<small class="ell">' + esc(p.t) + '</small><div class="pb"><i style="width:' + pct(p) + '%"></i></div>' : '<small class="ell dim">' + esc(it.group) + '</small>') + '</div></div>';
         },
         onFocus: function () { self.preview(); self.wantVisible(); }
@@ -825,12 +831,12 @@
     }
     EPG.want(it, true);
     var q = quality(it.name), cats = this.mode === 'cats', e = EPG.get(it), list = e ? e.list : null, p = nowProg(it);
-    pv.innerHTML = '<div class="pv-c">' + (it.logo ? '<img src="' + esc(it.logo) + '" onerror="this.outerHTML=\'<span class=ini>' + esc(initials(it.name)) + '</span>\'">' : '<span class="ini">' + esc(initials(it.name)) + '</span>') + '</div>' +
+    pv.innerHTML = '<div class="pv-c">' + (it.logo ? '<img src="' + esc(iu(it.logo)) + '" onerror="this.outerHTML=\'<span class=ini>' + esc(initials(it.name)) + '</span>\'">' : '<span class="ini">' + esc(initials(it.name)) + '</span>') + '</div>' +
       '<div class="pv-tags"><span class="live">AO VIVO</span>' + (q ? '<span>' + q + '</span>' : '') + (it.num ? '<span>Canal ' + it.num + '</span>' : '') + '</div>' +
       '<div class="pv-hint">' + (cats ? '<span><b>OK</b>Abrir categoria</span><span><b>▶</b>Continuar assistindo</span>' : '<span><b>OK</b>Assistir</span><span><b>▶</b>Opções</span><span><b>◀</b>Categorias</span>') + '</div>';
     this.btns = cats ? [{ t: SV.play + 'Continuar', fn: 'play' }] : [{ t: SV.play + 'Assistir', fn: 'play' }, { t: isFav(it.id) ? 'Remover dos favoritos' : 'Favoritar', fn: 'fav' }];
     $('#lvn').innerHTML = '<div class="sec">' + (cats ? 'Último canal assistido' : 'Agora no ar') + '</div>' +
-      '<h2 class="ell">' + esc(p ? p.t : it.name) + '</h2><p class="sub ell">' + esc(it.name) + (p ? ' · ' + hm(p.s) + ' – ' + hm(p.e) : ' · ' + esc(it.group)) + '</p>' +
+      '<h2 class="ell">' + esc(p ? p.t : cname(it.name)) + '</h2><p class="sub ell">' + esc(cname(it.name)) + (p ? ' · ' + hm(p.s) + ' – ' + hm(p.e) : ' · ' + esc(it.group)) + '</p>' +
       (p ? '<div class="pbar"><i style="width:' + pct(p) + '%"></i></div><p class="desc">' + esc(p.d || 'Sem descrição.') + '</p>' : '<p class="desc">' + (e ? 'Este canal não tem guia de programação.' : 'Carregando programação…') + '</p>') +
       '<div class="fns">' + this.btns.map(function (b, i) { return '<div class="fn ' + (i === 0 ? 'pri ' : '') + (self.zone === 'btn' && self.bi === i ? 'on' : '') + '">' + b.t + '</div>'; }).join('') + '</div>';
     var next = list ? list.slice(p ? 1 : 0, (p ? 1 : 0) + 5) : [];
@@ -939,7 +945,7 @@
     this.vl = new VList($('#pbl'), {
       h: 7.2, empty: 'Carregando canais com Playback…',
       render: function (it) {
-        return '<div class="lc"><div class="th">' + logoHTML(it) + '</div><div class="tx"><div class="nm"><span class="no">' + (it.num || '') + '</span><b class="ell">' + esc(it.name) + '</b></div>' +
+        return '<div class="lc"><div class="th">' + logoHTML(it) + '</div><div class="tx"><div class="nm"><span class="no">' + (it.num || '') + '</span><b class="ell">' + esc(cname(it.name)) + '</b>' + (quality(it.name) ? '<em class="q">' + quality(it.name) + '</em>' : '') + '</div>' +
           '<small class="ell">' + self.map[it.id] + (self.map[it.id] > 1 ? ' dias de Playback' : ' dia de Playback') + '</small></div></div>';
       },
       onFocus: function () { clearTimeout(self.ft); self.ft = setTimeout(function () { self.pickChannel(); }, 220); }
@@ -973,7 +979,7 @@
   PlaybackTab.prototype.drawTop = function () {
     var it = this.cur(); if (!it) return;
     var n = this.map[it.id];
-    $('#pbt').innerHTML = '<div class="pb-ch"><div class="th">' + logoHTML(it) + '</div><div class="tx"><h2 class="ell">' + esc(it.name) + '</h2><p>' + esc(it.group) + ' · Disponível por ' + n + (n > 1 ? ' dias' : ' dia') + '</p></div><span class="rec">● PLAYBACK</span></div>';
+    $('#pbt').innerHTML = '<div class="pb-ch"><div class="th">' + logoHTML(it) + '</div><div class="tx"><h2 class="ell">' + esc(cname(it.name)) + '</h2><p>' + esc(it.group) + ' · Disponível por ' + n + (n > 1 ? ' dias' : ' dia') + '</p></div><span class="rec">● PLAYBACK</span></div>';
   };
   PlaybackTab.prototype.drawDays = function () {
     var n = this.days(), h = '';

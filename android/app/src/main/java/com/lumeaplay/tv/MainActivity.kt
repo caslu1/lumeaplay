@@ -71,6 +71,7 @@ class MainActivity : Activity() {
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                 val u = request.url
                 if (u.host == HOST && (u.path ?: "").startsWith("/proxy")) return proxy(u)
+                if (u.host == HOST && u.path == "/img") return image(u)
                 return loader.shouldInterceptRequest(u)
             }
 
@@ -78,6 +79,7 @@ class MainActivity : Activity() {
             override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean = !url.startsWith("https://$HOST/")
         }
         setContentView(web)
+        trimImages()
         web.loadUrl("https://$HOST/assets/index.html")
         web.requestFocus()
     }
@@ -154,6 +156,82 @@ class MainActivity : Activity() {
             if (file.exists()) WebResourceResponse("text/plain", "utf-8", FileInputStream(file))
             else text(502, e.message ?: "erro")
         }
+    }
+
+    /**
+     * Logos e pôsteres: o app baixa a imagem com cabeçalhos de navegador e sem Referer
+     * (muitos servidores bloqueiam imagens pedidas de dentro de apps), segue redirecionamentos
+     * http↔https e guarda em disco por 7 dias, para as listas abrirem rápido nas próximas vezes.
+     */
+    private fun image(u: Uri): WebResourceResponse {
+        val target = u.getQueryParameter("url") ?: return text(400, "sem url")
+        val dir = File(cacheDir, "img").apply { mkdirs() }
+        val file = File(dir, sha1(target))
+        val headers = mapOf("Cache-Control" to "max-age=604800", "Access-Control-Allow-Origin" to "*")
+        if (file.exists() && file.length() > 0 && System.currentTimeMillis() - file.lastModified() < 7 * 86400_000L) {
+            return WebResourceResponse(sniff(file), null, 200, "OK", headers, FileInputStream(file))
+        }
+        return try {
+            var url = target
+            var conn: HttpURLConnection? = null
+            for (i in 0 until 6) {
+                val c = URL(url).openConnection() as HttpURLConnection
+                c.instanceFollowRedirects = false
+                c.connectTimeout = 8000
+                c.readTimeout = 12000
+                c.setRequestProperty("User-Agent", IMG_UA)
+                c.setRequestProperty("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+                val code = c.responseCode
+                if (code in 300..399) {
+                    val loc = c.getHeaderField("Location") ?: throw Exception("redirect")
+                    url = URL(URL(url), loc).toString(); c.disconnect(); continue
+                }
+                if (code != 200) { c.disconnect(); throw Exception("HTTP $code") }
+                conn = c; break
+            }
+            val c = conn ?: throw Exception("muitos redirecionamentos")
+            val tmp = File(dir, file.name + ".tmp")
+            c.inputStream.use { inp ->
+                tmp.outputStream().use { o ->
+                    val buf = ByteArray(16 * 1024); var total = 0
+                    while (true) {
+                        val n = inp.read(buf); if (n < 0) break
+                        total += n; if (total > 4 * 1024 * 1024) throw Exception("grande demais")
+                        o.write(buf, 0, n)
+                    }
+                }
+            }
+            c.disconnect()
+            tmp.renameTo(file)
+            WebResourceResponse(sniff(file), null, 200, "OK", headers, FileInputStream(file))
+        } catch (e: Exception) {
+            if (file.exists()) WebResourceResponse(sniff(file), null, 200, "OK", headers, FileInputStream(file))
+            else text(502, e.message ?: "erro")
+        }
+    }
+
+    /** Descobre o tipo da imagem pelos primeiros bytes (muitos servidores mandam o tipo errado). */
+    private fun sniff(f: File): String {
+        val b = ByteArray(12)
+        val n = try { FileInputStream(f).use { it.read(b) } } catch (e: Exception) { 0 }
+        if (n >= 4 && b[0] == 0x89.toByte() && b[1] == 'P'.code.toByte()) return "image/png"
+        if (n >= 3 && b[0] == 0xFF.toByte() && b[1] == 0xD8.toByte()) return "image/jpeg"
+        if (n >= 4 && b[0] == 'G'.code.toByte() && b[1] == 'I'.code.toByte()) return "image/gif"
+        if (n >= 12 && b[8] == 'W'.code.toByte() && b[9] == 'E'.code.toByte()) return "image/webp"
+        if (n >= 1 && (b[0] == '<'.code.toByte() || b[0] == ' '.code.toByte())) return "image/svg+xml"
+        return "image/jpeg"
+    }
+
+    /** Limpa o cache de imagens quando passa de ~150 MB (apaga as mais antigas). */
+    private fun trimImages() {
+        Thread {
+            try {
+                val fs = File(cacheDir, "img").listFiles() ?: return@Thread
+                var total = fs.sumOf { it.length() }
+                if (total < 150L * 1024 * 1024) return@Thread
+                for (f in fs.sortedBy { it.lastModified() }) { total -= f.length(); f.delete(); if (total < 100L * 1024 * 1024) break }
+            } catch (e: Exception) { }
+        }.start()
     }
 
     private fun download(start: String, out: File) {
@@ -254,6 +332,7 @@ class MainActivity : Activity() {
     companion object {
         const val HOST = "appassets.androidplatform.net"
         const val UA = "LumeaPlay/1.0 (Linux; Android)"
+        const val IMG_UA = "Mozilla/5.0 (Linux; Android 10; TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
         const val REQ_PLAYER = 77
     }
 }
