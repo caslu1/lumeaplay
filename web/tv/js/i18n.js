@@ -60,6 +60,10 @@
     'ID do aparelho': 'Device ID', 'Entrar': 'Sign in', 'Usar link M3U': 'Use M3U link', 'Receba o código de 9 dígitos do seu revendedor': 'Get the 9-digit code from your reseller',
     'Digite pelo controle remoto ou pelo teclado da tela': 'Type it with the remote or the on-screen keypad', 'Aperte Entrar e comece a assistir': 'Press Sign in and start watching',
     'Entrar com sua lista': 'Sign in with your list', 'LINK M3U': 'M3U LINK', 'Voltar': 'Back',
+    'Qualidade de vídeo': 'Video quality', 'Automática (recomendado)': 'Automatic (recommended)', 'Máxima': 'Maximum', 'Ajustar (padrão)': 'Fit (default)',
+    'Automática': 'Automatic', 'Manual': 'Manual', 'qualidade única': 'single quality', 'Este canal tem uma qualidade só.': 'This channel has only one quality.',
+    'Como o vídeo ocupa a tela da sua TV. Ajustar mantém a proporção original, sem cortar nem esticar.': 'How the video fills your TV screen. Fit keeps the original aspect ratio, without cropping or stretching.',
+    'Automática troca a qualidade sozinha conforme a sua internet, como no YouTube. Máxima trava na maior qualidade do canal. No player, a tecla vermelha, Menu ou Info troca a qualidade.': 'Automatic switches quality on its own based on your internet, like YouTube. Maximum locks the highest quality of the channel. In the player, the red, Menu or Info key changes the quality.',
     'Verificando seu acesso…': 'Checking your access…', 'Atualizando sua lista…': 'Refreshing your list…'
   };
   var RE = [
@@ -71,7 +75,7 @@
     [/^Você parou em (.+) de (.+)\.$/, 'You stopped at $1 of $2.'], [/^Último assistido: temporada (\d+), episódio (\d+)\.$/, 'Last watched: season $1, episode $2.'],
     [/^(\d+) min$/, '$1 min'], [/^(.+) MB baixados$/, '$1 MB downloaded'], [/^FILME • (.+)$/, 'MOVIE • $1'], [/^SÉRIE • (.+)$/, 'SERIES • $1'],
     [/^(\d+) canais · (\d+) filmes · (\d+) séries$/, '$1 channels · $2 movies · $3 series'], [/^Perfil atual: (.+)\. Cada perfil tem seus favoritos e o seu "continuar assistindo"\.$/, 'Current profile: $1. Each profile has its own favorites and "continue watching".'],
-    [/^(\d+) RESULTADOS$/, '$1 RESULTS'], [/^Nada encontrado para "(.*)"\.$/, 'Nothing found for "$1".'], [/^Tela: (.+)$/, 'Screen: $1'], [/^Perfil "(.+)" criado$/, 'Profile "$1" created'], [/^O código tem 9 números\. Faltam (\d+)\.$/, 'The code has 9 digits. $1 missing.'], [/^Muitas tentativas\. Aguarde (\d+) min e tente de novo\.$/, 'Too many attempts. Wait $1 min and try again.'], [/^Este código venceu em (.+)\. Fale com seu revendedor para renovar\.$/, 'This code expired on $1. Contact your reseller to renew.'], [/^Formato da tela: (.+)$/, 'Screen format: $1'], [/^Anti-travamento: (.+)$/, 'Anti-freeze: $1']
+    [/^(\d+) RESULTADOS$/, '$1 RESULTS'], [/^Nada encontrado para "(.*)"\.$/, 'Nothing found for "$1".'], [/^Tela: (.+)$/, 'Screen: $1'], [/^Qualidade: Automática$/, 'Quality: Automatic'], [/^Qualidade: (.+)$/, 'Quality: $1'], [/^Qualidade de vídeo: (.+)$/, 'Video quality: $1'], [/^(.*) · (\d+) qualidades(.*)$/, '$1 · $2 qualities$3'], [/^Perfil "(.+)" criado$/, 'Profile "$1" created'], [/^O código tem 9 números\. Faltam (\d+)\.$/, 'The code has 9 digits. $1 missing.'], [/^Muitas tentativas\. Aguarde (\d+) min e tente de novo\.$/, 'Too many attempts. Wait $1 min and try again.'], [/^Este código venceu em (.+)\. Fale com seu revendedor para renovar\.$/, 'This code expired on $1. Contact your reseller to renew.'], [/^Formato da tela: (.+)$/, 'Screen format: $1'], [/^Anti-travamento: (.+)$/, 'Anti-freeze: $1']
   ];
   var EN_UP = {}; for (var key in EN) EN_UP[key.toUpperCase()] = EN[key].toUpperCase();
   function tr(t) {

@@ -24,6 +24,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      # player das TVs: hls.js (se falhar, o app usa o player nativo da TV)
+      - name: Baixar hls.js
+        continue-on-error: true
+        run: |
+          cd "$RUNNER_TEMP" && npm pack hls.js@1.5 --silent
+          tar -xzf hls.js-*.tgz package/dist/hls.min.js
+          cp package/dist/hls.min.js "$GITHUB_WORKSPACE/web/tv/js/hls.min.js"
+          ls -la "$GITHUB_WORKSPACE/web/tv/js/hls.min.js"
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web

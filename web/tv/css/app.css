@@ -497,3 +497,4 @@ body{background:var(--bg)}
 @keyframes ldind{0%{transform:translateX(-110%)}100%{transform:translateX(340%)}}
 #loadmsg{font-size:1.35rem;font-weight:600;color:#e3e6ec}
 #loadsub{font-size:1.05rem;color:var(--mut);margin-top:.5rem;min-height:1.4rem;font-variant-numeric:tabular-nums}
+#wp #wq{font-weight:600;color:#fff;font-variant-numeric:tabular-nums}

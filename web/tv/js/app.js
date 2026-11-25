@@ -215,7 +215,7 @@
     if (it.type === 'live') addRecent(it.id);
     if (it.type === 'ep') { var last = Prof.get('lastEp', {}); last[it.series] = it.id; Prof.set('lastEp', last); }
     PlayCtx = { item: it, list: list };
-    var payload = { url: it.url, title: titleFor(it), sub: it.group || '', id: it.id, type: it.type === 'live' ? 'live' : 'vod', start: Math.floor((opts.start || 0) * 1000), index: idx, resize: store.get('resize', 'fit'), buf: store.get('buf', 'alto') };
+    var payload = { url: it.url, title: titleFor(it), sub: it.group || '', id: it.id, type: it.type === 'live' ? 'live' : 'vod', start: Math.floor((opts.start || 0) * 1000), index: idx, resize: store.get('resize', 'fit'), buf: store.get('buf', 'alto'), q: store.get('vq', 'auto') };
     if (N && N.play) {
       try { N.setPlaylist(JSON.stringify(list.map(function (x) { return { u: x.url, n: x.name, l: x.logo || '', id: x.id, num: x.num || 0 }; }))); } catch (e) { }
       N.play(JSON.stringify(payload));
@@ -228,31 +228,95 @@
     App.notify('progress');
   }
 
-  /* player web (LG / Samsung / navegador) */
+  /* player web (LG / Samsung / navegador)
+     - HLS (.m3u8) pelo hls.js (MSE: a TV decodifica por hardware), sem limite de resolução,
+       começa em qualidade alta e sobe rápido / desce devagar
+     - outros formatos, ou se o hls.js não existir / falhar: <video> nativo da TV
+     - tecla vermelha / Menu / Info troca a qualidade (Auto → maior → … → menor) */
+  var FIT = { fit: 'contain', fill: 'cover', zoom: 'fill' };
   var WebPlayer;
   WebPlayer = {
-    isOpen: false, list: [], idx: 0, p: null, hideT: null,
+    isOpen: false, list: [], idx: 0, p: null, hideT: null, hls: null, url: '', title: '', q: -1, fails: 0,
     open: function (p, list) {
       this.p = p; this.list = list || []; this.idx = p.index || 0; this.isOpen = true;
+      var v = $('#wv'); v.style.objectFit = FIT[p.resize] || 'contain';
       $('#wp').classList.remove('hide'); this.load(p.url, p.title, p.start / 1000);
     },
+    hlsCfg: function (live) {
+      return {
+        enableWorker: true, lowLatencyMode: false,
+        capLevelToPlayerSize: false, startLevel: -1,
+        abrEwmaDefaultEstimate: 8000000, abrBandWidthFactor: 0.95, abrBandWidthUpFactor: 0.85,
+        maxBufferLength: 30, maxMaxBufferLength: 60, backBufferLength: live ? 10 : 30, maxBufferSize: 60 * 1000 * 1000,
+        liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 10, maxLiveSyncPlaybackRate: 1.05,
+        fragLoadingMaxRetry: 6, manifestLoadingMaxRetry: 4, levelLoadingMaxRetry: 4
+      };
+    },
+    stopHls: function () { if (this.hls) { try { this.hls.destroy(); } catch (e) { } this.hls = null; } },
+    native: function (v, url) { this.stopHls(); v.src = url; var pr = v.play(); if (pr && pr.catch) pr.catch(function () { }); },
     load: function (url, title, start) {
-      var v = $('#wv'); $('#wt').textContent = title; v.src = url;
-      v.onloadedmetadata = function () { if (start) v.currentTime = start; };
-      v.onerror = function () { toast('Não foi possível reproduzir este conteúdo.'); };
+      var self = this, v = $('#wv'); this.url = url; this.title = title; this.q = -1; this.fails = 0;
+      $('#wt').textContent = title; $('#wq').textContent = '';
+      this.stopHls(); v.removeAttribute('src');
+      v.onloadedmetadata = function () { if (start) v.currentTime = start; self.info(); };
+      v.onresize = function () { self.info(); };
+      v.onerror = function () { if (!self.hls) toast('Não foi possível reproduzir este conteúdo.'); };
       v.ontimeupdate = function () { if (v.duration && isFinite(v.duration)) { $('#wb').style.width = (v.currentTime / v.duration * 100) + '%'; $('#wc').textContent = fmtTime(v.currentTime); $('#wd').textContent = fmtTime(v.duration); } };
-      var pr = v.play(); if (pr && pr.catch) pr.catch(function () { });
+      var H = window.Hls, useHls = false;
+      try { useHls = !!(H && H.isSupported() && /\.m3u8(\?|$)/i.test(url)); } catch (e) { }
+      if (useHls) {
+        try {
+          var h = new H(this.hlsCfg(this.p.type === 'live')); this.hls = h;
+          h.on(H.Events.MANIFEST_PARSED, function () {
+            if (store.get('vq', 'auto') === 'max' && h.levels.length > 1) { self.q = h.levels.length - 1; h.currentLevel = self.q; }
+            var pr = v.play(); if (pr && pr.catch) pr.catch(function () { }); self.info();
+          });
+          h.on(H.Events.LEVEL_SWITCHED, function () { self.info(); });
+          h.on(H.Events.ERROR, function (ev, d) {
+            if (!d || !d.fatal) return;
+            self.fails++;
+            if (self.fails <= 3 && d.type === H.ErrorTypes.NETWORK_ERROR) { setTimeout(function () { if (self.hls === h) h.startLoad(); }, 1000 * self.fails); return; }
+            if (self.fails <= 3 && d.type === H.ErrorTypes.MEDIA_ERROR) { h.recoverMediaError(); return; }
+            self.native(v, url); // fallback silencioso para o player nativo da TV
+          });
+          h.loadSource(url); h.attachMedia(v);
+        } catch (e) { this.native(v, url); }
+      } else this.native(v, url);
       this.osd();
     },
-    osd: function () { var o = $('#wp .ov'); o.style.opacity = 1; clearTimeout(this.hideT); this.hideT = setTimeout(function () { o.style.opacity = 0; }, 4000); },
+    /* resolução atual e quantas qualidades o canal tem */
+    info: function () {
+      var v = $('#wv'), h = this.hls, hh = v.videoHeight || 0, txt = hh ? hh + 'p' : '';
+      if (h && h.levels && h.levels.length) {
+        var lv = h.levels[h.currentLevel] || h.levels[h.loadLevel];
+        if (!hh && lv && lv.height) txt = lv.height + 'p';
+        var en = LANG === 'en', n = h.levels.length;
+        txt += (txt ? ' · ' : '') + (this.q < 0 ? (en ? 'Auto' : 'Automática') : 'Manual');
+        txt += ' · ' + (n > 1 ? n + (en ? ' qualities' : ' qualidades') : (en ? 'single quality' : 'qualidade única'));
+        if (h.bandwidthEstimate) txt += ' · ' + Math.round(h.bandwidthEstimate / 1000).toLocaleString(en ? 'en-US' : 'pt-BR') + ' kbps';
+      }
+      $('#wq').textContent = txt;
+    },
+    cycleQuality: function () {
+      var h = this.hls;
+      if (!h || !h.levels || h.levels.length < 2) { toast('Este canal tem uma qualidade só.'); return; }
+      // Auto → maior → … → menor → Auto
+      if (this.q < 0) this.q = h.levels.length - 1; else this.q--;
+      h.currentLevel = this.q; // -1 = automática
+      var lv = h.levels[this.q];
+      toast(this.q < 0 ? 'Qualidade: Automática' : 'Qualidade: ' + (lv.height ? lv.height + 'p' : Math.round(lv.bitrate / 1000) + ' kbps'));
+      this.info();
+    },
+    osd: function () { var o = $('#wp .ov'); this.info(); o.style.opacity = 1; clearTimeout(this.hideT); this.hideT = setTimeout(function () { o.style.opacity = 0; }, 4000); },
     close: function () {
       var v = $('#wv'); var r = { id: this.p.id, type: this.p.type, pos: (v.currentTime || 0) * 1000, dur: (isFinite(v.duration) ? v.duration : 0) * 1000, index: this.idx };
-      v.pause(); v.removeAttribute('src'); try { v.load(); } catch (e) { }
+      this.stopHls(); v.pause(); v.removeAttribute('src'); try { v.load(); } catch (e) { }
       this.isOpen = false; $('#wp').classList.add('hide'); onPlayerResult(r);
     },
     key: function (k) {
       var v = $('#wv'); this.osd();
       if (k === 'back') this.close();
+      else if (k === 'opt') this.cycleQuality();
       else if (k === 'ok') { if (v.paused) v.play(); else v.pause(); }
       else if (k === 'left' && this.p.type === 'vod') v.currentTime = Math.max(0, v.currentTime - 10);
       else if (k === 'right' && this.p.type === 'vod') v.currentTime = v.currentTime + 10;
@@ -990,7 +1054,7 @@
   SeriesScreen.prototype.notify = function (w) { if (w === 'progress') this.mount(App.root()); };
 
   /* ===== Configurações ===== */
-  var OPTS = ['Minha conta', 'Atualizar lista', 'Formato da tela', 'Anti-travamento', 'Conteúdo adulto', 'Perfis', 'Idioma', 'Trocar código'];
+  var OPTS = ['Minha conta', 'Atualizar lista', 'Formato da tela', 'Qualidade de vídeo', 'Anti-travamento', 'Conteúdo adulto', 'Perfis', 'Idioma', 'Trocar código'];
   function SettingsTab() { this.o = 0; this.zone = 'opts'; this.c = 0; }
   SettingsTab.prototype.mount = function (el) { this.el = el; this.draw(); };
   SettingsTab.prototype.focus = function (on) { this.focused = on; if (!on) this.zone = 'opts'; this.draw(); };
@@ -998,12 +1062,13 @@
     var self = this;
     switch (this.o) {
       case 1: return { type: 'btn', items: [{ t: 'Atualizar agora', fn: function () { reloadList(); } }] };
-      case 2: var rz = store.get('resize', 'fit'); return { type: 'choice', items: [['fit', 'Ajustar à tela'], ['fill', 'Preencher (cortar bordas)'], ['zoom', 'Esticar']].map(function (x) { return { t: x[1], s: rz === x[0], fn: function () { store.set('resize', x[0]); self.draw(); toast('Formato da tela: ' + x[1]); } }; }) };
-      case 3: var bf = store.get('buf', 'alto'); return { type: 'choice', items: [['normal', 'Normal'], ['alto', 'Alto (recomendado)'], ['max', 'Máximo']].map(function (x) { return { t: x[1], s: bf === x[0], fn: function () { store.set('buf', x[0]); self.draw(); toast('Anti-travamento: ' + x[1]); } }; }) };
-      case 4: var ad = store.get('adult', false); return { type: 'choice', items: [{ t: 'Oculto', s: !ad, fn: function () { store.set('adult', false); refreshAll(); self.draw(); } }, { t: 'Visível', s: ad, fn: function () { Modal.show('Mostrar conteúdo adulto?', 'Categorias adultas vão aparecer em todos os perfis, menos no Kids.', [{ t: 'Mostrar', fn: function () { store.set('adult', true); refreshAll(); self.draw(); } }, { t: 'Cancelar', w: 1 }]); } }] };
-      case 5: return { type: 'btn', items: [{ t: 'Trocar de perfil', fn: function () { App.show(new ProfScreen()); } }] };
-      case 6: return { type: 'btn', items: [{ t: 'Mudar idioma', fn: function () { App.push(new LangScreen(false)); } }] };
-      case 7: return { type: 'btn', items: [{ t: 'Sair e trocar código', fn: function () { Modal.show('Trocar o código?', 'Você vai precisar digitar um código de acesso de novo.', [{ t: 'Sair', fn: function () { Session.clear(); DATA = null; App.show(new ActScreen()); } }, { t: 'Cancelar', w: 1 }]); } }] };
+      case 2: var rz = store.get('resize', 'fit'); return { type: 'choice', items: [['fit', 'Ajustar (padrão)'], ['fill', 'Preencher (cortar bordas)'], ['zoom', 'Esticar']].map(function (x) { return { t: x[1], s: rz === x[0], fn: function () { store.set('resize', x[0]); self.draw(); toast('Formato da tela: ' + x[1]); } }; }) };
+      case 3: var vq = store.get('vq', 'auto'); return { type: 'choice', items: [['auto', 'Automática (recomendado)'], ['max', 'Máxima']].map(function (x) { return { t: x[1], s: vq === x[0], fn: function () { store.set('vq', x[0]); self.draw(); toast('Qualidade de vídeo: ' + x[1]); } }; }) };
+      case 4: var bf = store.get('buf', 'alto'); return { type: 'choice', items: [['normal', 'Normal'], ['alto', 'Alto (recomendado)'], ['max', 'Máximo']].map(function (x) { return { t: x[1], s: bf === x[0], fn: function () { store.set('buf', x[0]); self.draw(); toast('Anti-travamento: ' + x[1]); } }; }) };
+      case 5: var ad = store.get('adult', false); return { type: 'choice', items: [{ t: 'Oculto', s: !ad, fn: function () { store.set('adult', false); refreshAll(); self.draw(); } }, { t: 'Visível', s: ad, fn: function () { Modal.show('Mostrar conteúdo adulto?', 'Categorias adultas vão aparecer em todos os perfis, menos no Kids.', [{ t: 'Mostrar', fn: function () { store.set('adult', true); refreshAll(); self.draw(); } }, { t: 'Cancelar', w: 1 }]); } }] };
+      case 6: return { type: 'btn', items: [{ t: 'Trocar de perfil', fn: function () { App.show(new ProfScreen()); } }] };
+      case 7: return { type: 'btn', items: [{ t: 'Mudar idioma', fn: function () { App.push(new LangScreen(false)); } }] };
+      case 8: return { type: 'btn', items: [{ t: 'Sair e trocar código', fn: function () { Modal.show('Trocar o código?', 'Você vai precisar digitar um código de acesso de novo.', [{ t: 'Sair', fn: function () { Session.clear(); DATA = null; App.show(new ActScreen()); } }, { t: 'Cancelar', w: 1 }]); } }] };
     }
     return null;
   };
@@ -1020,7 +1085,7 @@
         '<div class="li"><div><small>SUA LISTA</small>' + cnt + '</div><span class="m">' + (upd ? 'Atualizada ' + fmtDate(upd.toISOString()) + ' ' + pad(upd.getHours()) + ':' + pad(upd.getMinutes()) : '') + '</span></div>' +
         '<div class="li"><div><small>VERSÃO</small>LumeaPlay ' + esc(CFG.version || '1.0') + '</div></div></div>';
     } else {
-      var desc = ['', 'Baixa a lista de novo do servidor, com os canais, filmes e séries mais recentes.', 'Como o vídeo ocupa a tela da sua TV.', 'Guarda mais segundos de vídeo antes de tocar e reconecta sozinho quando o sinal cai. Use Máximo em internet instável.', 'Esconde ou mostra as categorias adultas da lista.', 'Perfil atual: ' + esc(Prof.cur().name) + '. Cada perfil tem seus favoritos e o seu "continuar assistindo".', 'Escolha o idioma do aplicativo.', 'Sai desta conta neste aparelho. O código continua válido.'][this.o];
+      var desc = ['', 'Baixa a lista de novo do servidor, com os canais, filmes e séries mais recentes.', 'Como o vídeo ocupa a tela da sua TV. Ajustar mantém a proporção original, sem cortar nem esticar.', 'Automática troca a qualidade sozinha conforme a sua internet, como no YouTube. Máxima trava na maior qualidade do canal. No player, a tecla vermelha, Menu ou Info troca a qualidade.', 'Guarda mais segundos de vídeo antes de tocar e reconecta sozinho quando o sinal cai. Use Máximo em internet instável.', 'Esconde ou mostra as categorias adultas da lista.', 'Perfil atual: ' + esc(Prof.cur().name) + '. Cada perfil tem seus favoritos e o seu "continuar assistindo".', 'Escolha o idioma do aplicativo.', 'Sai desta conta neste aparelho. O código continua válido.'][this.o];
       body = '<div class="pan"><div class="li"><div><small>' + OPTS[this.o].toUpperCase() + '</small><span style="font-weight:500;color:#cfd6f2">' + desc + '</span></div></div>' +
         (ctl.type === 'choice' ? '<div class="choice">' + ctl.items.map(function (x, i) { return '<span class="' + (self.zone === 'ctl' && self.c === i ? 'on' : x.s ? 's' : '') + '">' + esc(x.t) + '</span>'; }).join('') + '</div>'
           : '<div class="btns">' + ctl.items.map(function (x, i) { return '<div class="btn w ' + (self.zone === 'ctl' && self.c === i ? 'on' : '') + '">' + x.t + '</div>'; }).join('') + '</div>') + '</div>';
@@ -1136,6 +1201,7 @@
       case 13: case 23: case 66: return 'ok';
       case 8: case 27: case 461: case 10009: case 4: return 'back';
       case 33: case 427: return 'chup'; case 34: case 428: return 'chdown';
+      case 403: case 457: case 93: case 82: return 'opt';
     }
     if (k >= 48 && k <= 57) return 'd' + (k - 48);
     if (k >= 96 && k <= 105) return 'd' + (k - 96);
@@ -1150,7 +1216,7 @@
     if (!handled && k === 'back') exitApp();
   });
   document.addEventListener('paste', function (e) { var tp = App.top(), t = (e.clipboardData || window.clipboardData).getData('text'); if (tp && tp.typeChar && t) { e.preventDefault(); tp.typeChar(t.trim()); } });
-  try { if (window.tizen && tizen.tvinputdevice) ['ChannelUp', 'ChannelDown', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].forEach(function (k) { try { tizen.tvinputdevice.registerKey(k); } catch (e) { } }); } catch (e) { }
+  try { if (window.tizen && tizen.tvinputdevice) ['ChannelUp', 'ChannelDown', 'ColorF0Red', 'Info', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].forEach(function (k) { try { tizen.tvinputdevice.registerKey(k); } catch (e) { } }); } catch (e) { }
 
   /* ponte com o Android */
   window.LP = {

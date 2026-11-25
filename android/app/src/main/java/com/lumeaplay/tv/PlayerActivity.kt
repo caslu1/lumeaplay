@@ -17,13 +17,16 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -39,6 +42,12 @@ import java.util.Locale
  *  - volta ao ponto ao vivo quando a transmissão "fica para trás"
  *  - vigia: se a imagem congela ou fica carregando tempo demais, recarrega sozinho
  *  - mostra a velocidade (kbps) e a resolução enquanto carrega
+ * Qualidade de imagem:
+ *  - sem limite de resolução pelo tamanho da tela; começa em qualidade alta (8 Mbps estimados)
+ *  - "Automática" troca sozinha conforme a internet; "Máxima" trava na maior qualidade do canal
+ *  - tecla Menu / Info / vermelha troca a qualidade manualmente
+ *  - decodificação por hardware, com troca automática de decodificador se um falhar
+ *  - SurfaceView (padrão do PlayerView): o desentrelaçamento de canais 1080i fica a cargo do hardware
  */
 @OptIn(UnstableApi::class)
 class PlayerActivity : Activity() {
@@ -53,6 +62,9 @@ class PlayerActivity : Activity() {
     private lateinit var net: TextView
     private lateinit var bufTxt: TextView
     private lateinit var meter: DefaultBandwidthMeter
+    private var selector: DefaultTrackSelector? = null
+    private var quality = "auto"
+    private var manualH = 0 // 0 = automática; senão altura escolhida (ex.: 1080)
     private val ui = Handler(Looper.getMainLooper())
     private val nf: NumberFormat = NumberFormat.getIntegerInstance(Locale("pt", "BR"))
 
@@ -70,6 +82,7 @@ class PlayerActivity : Activity() {
     private var lastPos = -1L
     private var frozenMs = 0L
     private var osdUntil = 0L
+    private var flashUntil = 0L
 
     private val reconnect = Runnable { reconnecting = false; reload() }
     private val tick = object : Runnable {
@@ -91,12 +104,12 @@ class PlayerActivity : Activity() {
         err = findViewById(R.id.err)
         net = findViewById(R.id.net)
         bufTxt = findViewById(R.id.bufTxt)
-        meter = DefaultBandwidthMeter.getSingletonInstance(this)
+        meter = sharedMeter(this)
 
         val p = JSONObject(intent.getStringExtra("p") ?: "{}")
         id = p.optString("id"); type = p.optString("type", "vod"); title = p.optString("title")
         sub = p.optString("sub"); url = p.optString("url"); index = p.optInt("index", 0)
-        startMs = p.optLong("start", 0); buf = p.optString("buf", "alto")
+        startMs = p.optLong("start", 0); buf = p.optString("buf", "alto"); quality = p.optString("q", "auto")
 
         view.setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
         view.controllerShowTimeoutMs = 3500
@@ -131,7 +144,7 @@ class PlayerActivity : Activity() {
             .setConnectTimeoutMs(12000)
             .setReadTimeoutMs(15000)
         val b = when (buf) {
-            "normal" -> intArrayOf(15000, 50000, 1500, 3000)
+            "normal" -> intArrayOf(15000, 50000, 2500, 5000)
             "max" -> intArrayOf(50000, 180000, 4000, 8000)
             else -> intArrayOf(30000, 90000, 2500, 5000)
         }
@@ -141,7 +154,22 @@ class PlayerActivity : Activity() {
             .build()
         val sources = DefaultMediaSourceFactory(DefaultDataSource.Factory(this, http))
             .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(8))
-        val p = ExoPlayer.Builder(this)
+        // sem limite pelo tamanho da tela; "Máxima" força o maior bitrate que o aparelho suporta
+        val sel = DefaultTrackSelector(this)
+        sel.setParameters(
+            sel.buildUponParameters()
+                .clearViewportSizeConstraints()
+                .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
+                .setMaxVideoBitrate(Int.MAX_VALUE)
+                .setForceHighestSupportedBitrate(quality == "max")
+        )
+        selector = sel
+        // decodificador de hardware primeiro; se falhar, tenta o próximo disponível
+        val renderers = DefaultRenderersFactory(this)
+            .setEnableDecoderFallback(true)
+            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF)
+        val p = ExoPlayer.Builder(this, renderers)
+            .setTrackSelector(sel)
             .setMediaSourceFactory(sources)
             .setLoadControl(load)
             .setBandwidthMeter(meter)
@@ -152,6 +180,10 @@ class PlayerActivity : Activity() {
                     p.seekToDefaultPosition(); p.prepare(); return
                 }
                 scheduleReconnect()
+            }
+
+            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                if (manualH > 0) applyQuality()
             }
 
             override fun onPlaybackStateChanged(state: Int) {
@@ -177,6 +209,10 @@ class PlayerActivity : Activity() {
         val p = player ?: return
         val b = MediaItem.Builder().setUri(Uri.parse(u))
         if (u.lowercase().contains(".m3u8")) b.setMimeType(MimeTypes.APPLICATION_M3U8)
+        // ao vivo: pode acelerar/atrasar levemente para ficar perto do sinal, sem ficar muito atrasado
+        if (type == "live") b.setLiveConfiguration(
+            MediaItem.LiveConfiguration.Builder().setMinPlaybackSpeed(0.97f).setMaxPlaybackSpeed(1.04f).build()
+        )
         p.setMediaItem(b.build(), if (start > 0) start else C.TIME_UNSET)
         p.prepare()
         p.playWhenReady = true
@@ -210,7 +246,10 @@ class PlayerActivity : Activity() {
         val now = SystemClock.uptimeMillis()
         val kbps = meter.bitrateEstimate / 1000
         val h = p.videoFormat?.height ?: 0
-        val speed = (if (h > 0) "${h}p  ·  " else "") + nf.format(kbps) + " kbps"
+        val n = videoHeights().size
+        val mode = if (manualH > 0) "Manual" else if (quality == "max") "Máxima" else "Automática"
+        val speed = (if (h > 0) "${h}p  ·  " else "") + mode + "  ·  " +
+            (if (n > 1) "$n qualidades" else "qualidade única") + "  ·  " + nf.format(kbps) + " kbps"
         val buffering = p.playbackState == Player.STATE_BUFFERING
 
         if (buffering && p.playWhenReady) {
@@ -222,7 +261,7 @@ class PlayerActivity : Activity() {
                 retries++
                 reload()
             }
-        } else bufTxt.visibility = View.GONE
+        } else if (SystemClock.uptimeMillis() >= flashUntil) bufTxt.visibility = View.GONE
 
         net.text = speed
         net.visibility = if (buffering || now < osdUntil || view.isControllerFullyVisible) View.VISIBLE else View.GONE
@@ -248,12 +287,58 @@ class PlayerActivity : Activity() {
         ui.postAtTime({ osd.visibility = View.GONE }, "osd", osdUntil)
     }
 
+    /** Alturas de vídeo disponíveis no canal atual (maior → menor). */
+    private fun videoHeights(): List<Int> {
+        val p = player ?: return emptyList()
+        val hs = HashSet<Int>()
+        for (g in p.currentTracks.groups) {
+            if (g.type != C.TRACK_TYPE_VIDEO) continue
+            for (i in 0 until g.length) if (g.isTrackSupported(i)) { val h = g.getTrackFormat(i).height; if (h > 0) hs.add(h) }
+        }
+        return hs.sortedDescending()
+    }
+
+    /** Aplica a qualidade escolhida (manual) ou volta para a automática/máxima. */
+    private fun applyQuality() {
+        val p = player ?: return
+        val b = p.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+        if (manualH > 0) {
+            loop@ for (g in p.currentTracks.groups) {
+                if (g.type != C.TRACK_TYPE_VIDEO) continue
+                for (i in 0 until g.length) {
+                    if (g.isTrackSupported(i) && g.getTrackFormat(i).height == manualH) {
+                        if (g.isTrackSelected(i)) return
+                        b.addOverride(TrackSelectionOverride(g.mediaTrackGroup, i)); break@loop
+                    }
+                }
+            }
+        }
+        p.trackSelectionParameters = b.build()
+    }
+
+    /** Menu / Info / vermelha: Automática → maior → … → menor → Automática. */
+    private fun cycleQuality() {
+        val hs = videoHeights()
+        if (hs.size < 2) { flash("Este canal tem uma qualidade só."); return }
+        val i = hs.indexOf(manualH)
+        manualH = if (manualH == 0) hs[0] else if (i >= 0 && i < hs.size - 1) hs[i + 1] else 0
+        applyQuality()
+        flash(if (manualH == 0) "Qualidade: " + (if (quality == "max") "Máxima" else "Automática") else "Qualidade: ${manualH}p")
+    }
+
+    private fun flash(msg: String) {
+        bufTxt.text = msg; bufTxt.visibility = View.VISIBLE
+        flashUntil = SystemClock.uptimeMillis() + 3000
+        osdUntil = maxOf(osdUntil, flashUntil)
+    }
+
     private fun zap(d: Int) {
         val list = Playlist.items
         if (list.size < 2) return
         index = (index + d + list.size) % list.size
         val it = list[index]
-        url = it.url; id = it.id; title = it.name; retries = 0
+        url = it.url; id = it.id; title = it.name; retries = 0; manualH = 0
+        player?.let { pl -> pl.trackSelectionParameters = pl.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_VIDEO).build() }
         reconnecting = false; ui.removeCallbacks(reconnect)
         err.visibility = View.GONE
         load(url, 0)
@@ -261,6 +346,8 @@ class PlayerActivity : Activity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 && event.keyCode in QUALITY_KEYS) { cycleQuality(); return true }
+        if (event.keyCode in QUALITY_KEYS) return true
         if (type == "live" && event.action == KeyEvent.ACTION_DOWN && !view.isControllerFullyVisible) {
             when (event.keyCode) {
                 KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_PAGE_UP -> { zap(-1); return true }
@@ -289,6 +376,17 @@ class PlayerActivity : Activity() {
             .put("pos", p?.currentPosition ?: 0L)
             .put("dur", if (dur == C.TIME_UNSET) 0L else dur)
         setResult(RESULT_OK, Intent().putExtra("r", r.toString()))
+    }
+
+    companion object {
+        private val QUALITY_KEYS = setOf(KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_INFO, KeyEvent.KEYCODE_PROG_RED, KeyEvent.KEYCODE_SETTINGS)
+        private var meterInstance: DefaultBandwidthMeter? = null
+
+        /** Um medidor só para o app todo: a velocidade medida num canal já vale para o próximo. Começa em 8 Mbps. */
+        fun sharedMeter(ctx: android.content.Context): DefaultBandwidthMeter =
+            meterInstance ?: DefaultBandwidthMeter.Builder(ctx.applicationContext)
+                .setInitialBitrateEstimate(8_000_000L)
+                .build().also { meterInstance = it }
     }
 
     override fun finish() {
